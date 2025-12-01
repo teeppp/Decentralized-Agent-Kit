@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  agent:
+    build: ./agent
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://username:password@postgres:5432/postgres
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-dev-secret-change-in-production}
+      - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
+      - MCP_SERVER_URL=http://mcp-server:8000/mcp
+    depends_on:
+      - postgres
+    volumes:
+      - ./agent/agent_config.yaml:/app/agent_config.yaml
+
+  mcp-server:
+    build: ./mcp-server
+    ports:
+      - "8001:8000" # Map host 8001 to container 8000 (default SSE port)
+    env_file:
+      - .env
+    environment:
+      - AGENT_URL=http://agent:8000
+      - UVICORN_HOST=0.0.0.0
+    volumes:
+      - .:/projects
+    depends_on:
+      - agent
+
+  ui:
+    build: ./ui
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXTAUTH_URL=http://localhost:3000
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-dev-secret-change-in-production}
+      - NEXT_PUBLIC_AGENT_URL=http://localhost:8000
+      - AGENT_URL=http://agent:8000
+      - NEXT_PUBLIC_REQUIRE_AUTH=${NEXT_PUBLIC_REQUIRE_AUTH:-false}
+      - REQUIRE_AUTH=${NEXT_PUBLIC_REQUIRE_AUTH:-false}
+      - LOCAL_AUTH_USERS=${LOCAL_AUTH_USERS:-admin:admin123}
+      - NEXT_PUBLIC_HAS_LOCAL_AUTH=true
+      - NEXT_PUBLIC_HAS_GOOGLE_AUTH=${GOOGLE_CLIENT_ID:+true}
+      - NEXT_PUBLIC_HAS_GITHUB_AUTH=${GITHUB_CLIENT_ID:+true}
+    depends_on:
+      - agent
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=username
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  postgres_data:
