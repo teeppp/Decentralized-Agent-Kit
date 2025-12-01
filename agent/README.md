@@ -1,0 +1,234 @@
+# DAK Agent
+
+The main agent service for the Decentralized Agent Kit.
+
+## Overview
+
+The DAK Agent is a FastAPI-based service that provides an intelligent agent powered by Large Language Models (LLMs). It supports multiple LLM providers, integrates with the Model Context Protocol (MCP) for tool usage, and implements Agent-to-Agent (A2A) communication.
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                      DAK Agent                           │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  ┌────────────┐  ┌─────────────┐  ┌─────────────────┐  │
+│  │ API Layer  │  │ LLM Manager │  │  MCP Client     │  │
+│  │            │  │             │  │                 │  │
+│  │ • /api/run │  │ • Gemini    │  │ • Tool Discovery│  │
+│  │ • /task/*  │  │ • OpenAI    │  │ • Tool Execute  │  │
+│  │ • Auth     │  │ • Anthropic │  │                 │  │
+│  └────────────┘  └─────────────┘  └─────────────────┘  │
+│         │               │                    │          │
+│         └───────────────┴────────────────────┘          │
+│                         │                               │
+│              ┌──────────▼──────────┐                    │
+│              │   Agent Core        │                    │
+│              │  • State Manager    │                    │
+│              │  • Chat History     │                    │
+│              │  • A2A Handler      │                    │
+│              └─────────────────────┘                    │
+└──────────────────────────────────────────────────────────┘
+```
+
+## Features
+
+### LLM Integration
+
+Supports multiple LLM providers with automatic tool calling:
+
+- **Gemini**: Google's Gemini models (default: `gemini-3-pro-preview`)
+- **OpenAI**: GPT-4, GPT-3.5, etc.
+- **Anthropic**: Claude models
+
+Configure via environment variables:
+```bash
+LLM_PROVIDER=gemini  # or 'openai', 'anthropic'
+GOOGLE_API_KEY=your_key
+OPENAI_API_KEY=your_key  # if using OpenAI
+ANTHROPIC_API_KEY=your_key  # if using Anthropic
+```
+
+### MCP Client Integration
+
+The agent dynamically discovers and executes tools from the MCP Server:
+
+1. **Tool Discovery**: Lists available tools at runtime
+2. **Schema Conversion**: Converts MCP tool schemas to LLM function schemas
+3. **Tool Execution**: Executes tools via MCP protocol
+4. **Result Integration**: Feeds tool results back to LLM
+
+See [MCP Integration Guide](../docs/guides/mcp_integration.md) for details.
+
+### State Management
+
+Conversation history is persisted using:
+
+- **MongoStateManager** (default): Uses FerretDB/MongoDB for persistence
+- **InMemoryStateManager** (fallback): In-memory storage if database unavailable
+
+State is keyed by `(user_id, session_id)` for multi-user support.
+
+### Authentication
+
+Supports three authentication modes:
+
+1. **JWT**: Validates NextAuth.js tokens from UI
+2. **Header-based**: Uses `X-User-ID` and `X-Session-ID` headers
+3. **Debug**: Falls back to default user/session for development
+
+### A2A Protocol
+
+Agent-to-Agent communication endpoints:
+
+- `POST /task/send`: Receive tasks from other agents
+- `GET /task/status/{task_id}`: Query task status
+
+## API Endpoints
+
+### Main endpoints
+
+#### `POST /api/run`
+
+Run the agent with a prompt.
+
+**Request**:
+```json
+{
+  "prompt": "Use deep_think to analyze consciousness"
+}
+```
+
+**Headers**:
+- `Authorization: Bearer <jwt_token>` (optional)
+- `X-User-ID: <user_id>` (optional)
+- `X-Session-ID: <session_id>` (optional)
+
+**Response**:
+```json
+{
+  "result": "Based on the DeepThink analysis..."
+}
+```
+
+#### `GET /capabilities`
+
+Get agent capabilities.
+
+**Response**:
+```json
+{
+  "name": "dak-agent",
+  "capabilities": ["chat", "tool_use", "a2a"]
+}
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `LLM_PROVIDER` | No | `gemini` | LLM provider to use |
+| `GOOGLE_API_KEY` | Yes* | - | Google Gemini API key |
+| `GEMINI_MODEL` | No | `gemini-3-pro-preview` | Gemini model name |
+| `OPENAI_API_KEY` | Yes* | - | OpenAI API key |
+| `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key |
+| `MONGO_URI` | No | `mongodb://username:password@ferretdb:27017/` | MongoDB connection string |
+| `MCP_SERVER_URL` | No | `http://mcp-server:8000/mcp` | MCP Server URL |
+| `NEXTAUTH_SECRET` | No | - | NextAuth.js secret for JWT validation |
+
+*At least one LLM provider API key is required
+
+### Dependencies
+
+Managed via `uv` and defined in `pyproject.toml`:
+
+- `fastapi`: Web framework
+- `uvicorn`: ASGI server
+- `google-generativeai`: Gemini integration
+- `openai`: OpenAI integration
+- `anthropic`: Anthropic integration
+- `mcp`: MCP protocol client
+- `pymongo`: MongoDB/FerretDB client
+- `pyjwt`: JWT validation
+
+## Development
+
+### Local Setup
+
+```bash
+cd agent
+uv sync
+export GOOGLE_API_KEY=your_key
+export PYTHONPATH=$PYTHONPATH:$(pwd)/src
+uv run uvicorn src.main:app --reload
+```
+
+### Running with Docker
+
+```bash
+docker compose up --build -d agent
+docker compose logs agent -f
+```
+
+### Testing
+
+```bash
+# Test agent endpoint
+curl -X POST http://localhost:8000/api/run \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Hello"}'
+
+# Test with MCP tool
+curl -X POST http://localhost:8000/api/run \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Use deep_think to analyze AI"}'
+```
+
+## Project Structure
+
+```
+agent/
+├── src/
+│   ├── main.py              # FastAPI app entry point
+│   ├── agent.py             # Core agent logic
+│   ├── llm.py               # LLM provider implementations
+│   ├── mcp_client.py        # MCP Client for tool usage
+│   ├── state_manager.py     # Conversation history management
+│   ├── auth.py              # JWT authentication
+│   ├── a2a_handler.py       # Agent-to-Agent communication
+│   └── api/
+│       ├── ui.py            # UI-facing endpoints
+│       └── a2a.py           # A2A protocol endpoints
+├── pyproject.toml           # Project dependencies
+├── Dockerfile               # Container image definition
+└── README.md                # This file
+```
+
+## Logs
+
+View agent logs:
+
+```bash
+docker compose logs agent -f
+```
+
+Expected log entries:
+
+```
+INFO:     Started server process [N]
+INFO:state_manager:Initializing MongoStateManager
+INFO:     Application startup complete
+API: Received run request with prompt: ...
+MCPClient: Connecting to http://mcp-server:8000/mcp...
+MCPClient: Calling tool deep_think with args {...}
+GeminiModel: Generating content for prompt: ...
+```
+
+## See Also
+
+- [MCP Integration Guide](../docs/guides/mcp_integration.md)
+- [Docker Deployment Guide](../docs/getting-started/docker_deployment.md)
+- [CLI Usage Guide](../docs/guides/cli_usage.md)
