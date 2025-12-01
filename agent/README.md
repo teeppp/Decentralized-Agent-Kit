@@ -11,24 +11,25 @@ The DAK Agent is a FastAPI-based service that provides an intelligent agent powe
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                      DAK Agent                           │
+│                    (google-adk)                          │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
-│  ┌────────────┐  ┌─────────────┐  ┌─────────────────┐  │
-│  │ API Layer  │  │ LLM Manager │  │  MCP Client     │  │
-│  │            │  │             │  │                 │  │
-│  │ • /api/run │  │ • Gemini    │  │ • Tool Discovery│  │
-│  │ • /task/*  │  │ • OpenAI    │  │ • Tool Execute  │  │
-│  │ • Auth     │  │ • Anthropic │  │                 │  │
-│  └────────────┘  └─────────────┘  └─────────────────┘  │
-│         │               │                    │          │
-│         └───────────────┴────────────────────┘          │
-│                         │                               │
-│              ┌──────────▼──────────┐                    │
-│              │   Agent Core        │                    │
-│              │  • State Manager    │                    │
-│              │  • Chat History     │                    │
-│              │  • A2A Handler      │                    │
-│              └─────────────────────┘                    │
+│  ┌────────────┐  ┌─────────────┐  ┌─────────────────┐    │
+│  │ ADK Web    │  │ LLM Manager │  │  MCP Client     │    │
+│  │            │  │             │  │                 │    │
+│  │ • /run     │  │ • Gemini    │  │ • Tool Discovery│    │
+│  │ • /apps/*  │  │ • OpenAI    │  │ • Tool Execute  │    │
+│  │            │  │ • Anthropic │  │                 │    │
+│  └────────────┘  └─────────────┘  └─────────────────┘    │
+│         │               │                    │           │
+│         └───────────────┴────────────────────┘           │
+│                         │                                │
+│              ┌──────────▼──────────┐                     │
+│              │   Agent Core        │                     │
+│              │  • State Manager    │                     │
+│              │  • Chat History     │                     │
+│              │  • A2A Handler      │                     │
+│              └─────────────────────┘                     │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -65,8 +66,8 @@ See [MCP Integration Guide](../docs/guides/mcp_integration.md) for details.
 
 Conversation history is persisted using:
 
-- **MongoStateManager** (default): Uses FerretDB/MongoDB for persistence
-- **InMemoryStateManager** (fallback): In-memory storage if database unavailable
+- **PostgreSQL** (default): Uses PostgreSQL for persistence via `google-adk`
+- **InMemory** (fallback): In-memory storage if database unavailable
 
 State is keyed by `(user_id, session_id)` for multi-user support.
 
@@ -89,27 +90,32 @@ Agent-to-Agent communication endpoints:
 
 ### Main endpoints
 
-#### `POST /api/run`
+#### `POST /run`
 
 Run the agent with a prompt.
 
 **Request**:
 ```json
 {
-  "prompt": "Use deep_think to analyze consciousness"
+  "app_name": "dak_agent",
+  "user_id": "user123",
+  "session_id": "session_abc",
+  "new_message": {
+    "parts": [{"text": "Use deep_think to analyze consciousness"}]
+  }
 }
 ```
 
-**Headers**:
-- `Authorization: Bearer <jwt_token>` (optional)
-- `X-User-ID: <user_id>` (optional)
-- `X-Session-ID: <session_id>` (optional)
-
 **Response**:
 ```json
-{
-  "result": "Based on the DeepThink analysis..."
-}
+[
+  {
+    "content": {
+      "role": "model",
+      "parts": [{"text": "Based on the DeepThink analysis..."}]
+    }
+  }
+]
 ```
 
 #### `GET /capabilities`
@@ -135,7 +141,7 @@ Get agent capabilities.
 | `GEMINI_MODEL` | No | `gemini-3-pro-preview` | Gemini model name |
 | `OPENAI_API_KEY` | Yes* | - | OpenAI API key |
 | `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key |
-| `MONGO_URI` | No | `mongodb://username:password@ferretdb:27017/` | MongoDB connection string |
+| `SESSION_SERVICE_URI` | No | `postgresql://...` | PostgreSQL connection string |
 | `MCP_SERVER_URL` | No | `http://mcp-server:8000/mcp` | MCP Server URL |
 | `NEXTAUTH_SECRET` | No | - | NextAuth.js secret for JWT validation |
 
