@@ -1,0 +1,325 @@
+import typer
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.table import Table
+from typing import Optional, List, Dict, Callable
+import time
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.styles import Style
+
+from .config import ConfigManager
+from .client import AgentClient
+from . import commands as cmd_lib
+
+app = typer.Typer(help="DAK CLI - Decentralized Agent Kit Command Line Interface")
+console = Console()
+config_manager = ConfigManager()
+
+@app.command()
+def login(
+    username: str = typer.Option(..., prompt="Enter your username"),
+    agent_url: str = typer.Option("http://localhost:8000", prompt="Enter Agent API URL"),
+):
+    """
+    Log in to the DAK Agent.
+    """
+    config_manager.set_user(username)
+    config_manager.set_agent_url(agent_url)
+    console.print(f"[green]Successfully logged in as [bold]{username}[/bold]![/green]")
+    console.print(f"Agent URL set to: [blue]{agent_url}[/blue]")
+
+@app.command()
+def run(prompt: str):
+    """
+    Run a single task/prompt against the agent.
+    """
+    try:
+        client = AgentClient()
+        with console.status("[bold green]Waiting for agent response..."):
+            response_data = client.run_task(prompt, permissions={"default": "ask"})
+        
+        # Handle approval loop
+        while isinstance(response_data, dict) and response_data.get("status") == "needs_approval":
+            tool_call = response_data.get("tool_call", {})
+            tool_name = tool_call.get("tool_name")
+            tool_args = tool_call.get("tool_args")
+            tool_call_id = tool_call.get("tool_call_id")
+            
+            console.print(Panel(
+                f"Tool: [bold cyan]{tool_name}[/bold cyan]\\nArgs: {tool_args}",
+                title="[yellow]Approval Required[/yellow]",
+                border_style="yellow"
+            ))
+            
+            if typer.confirm("Allow this tool execution?"):
+                with console.status("[bold green]Executing tool..."):
+                    response_data = client.run_task(
+                        prompt, 
+                        tool_approval={
+                            "approved": True,
+                            "tool_name": tool_name,
+                            "tool_args": tool_args,
+                            "tool_call_id": tool_call_id,
+                            "invocation_id": tool_call.get("invocation_id")
+                        }
+                    )
+            else:
+                with console.status("[bold red]Denying tool..."):
+                    response_data = client.run_task(
+                        prompt, 
+                        tool_approval={
+                            "approved": False,
+                            "tool_name": tool_name,
+                            "tool_args": tool_args,
+                            "tool_call_id": tool_call_id,
+                            "invocation_id": tool_call.get("invocation_id")
+                        }
+                    )
+
+        # ADK returns an array of events, we need to extract the text from model responses
+        response_text = ""
+        if isinstance(response_data, list):
+            for event in response_data:
+                if event.get("content", {}).get("role") == "model":
+                    parts = event.get("content", {}).get("parts", [])
+                    for part in parts:
+                        if "text" in part:
+                            response_text += part["text"]
+        else:
+            # Fallback for old format
+            response_text = response_data.get("response", "No response")
+        
+        console.print(Panel(Markdown(response_text), title="Agent Response", border_style="blue"))
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+
+# Slash Command Implementation
+
+@app.command()
+def chat(
+    resume: Optional[str] = typer.Option(None, "--resume", "-r", help="Resume a specific session ID")
+):
+    """
+    Start an interactive chat session with the agent.
+    Supports slash commands like /help, /history.
+    """
+    try:
+        client = AgentClient(session_id=resume)
+        user = config_manager.get_user()
+        if not user:
+            console.print("[red]Not logged in. Please run 'dak-cli login' first.[/red]")
+            return
+
+        ctx = cmd_lib.CommandContext(client, console, config_manager)
+        
+        # Load custom commands
+        cmd_lib.load_markdown_commands(ctx)
+        
+        console.print(Panel(
+            f"Welcome to DAK CLI Chat, [bold]{user}[/bold]!\n"
+            f"Session ID: [bold cyan]{client.session_id}[/bold cyan]\n"
+            "Type '/help' for commands, or 'exit' to quit.", 
+            title="DAK Chat", 
+            border_style="green"
+        ))
+
+        # Setup autocomplete using registry
+        commands = cmd_lib.registry.get_all_commands()
+        command_completer = WordCompleter(list(commands.keys()), ignore_case=True)
+        prompt_session = PromptSession(completer=command_completer)
+        
+        # Custom style for the prompt
+        style = Style.from_dict({
+            'prompt': 'cyan bold',
+        })
+
+        while True:
+            try:
+                # Use prompt_toolkit for input
+                user_input = prompt_session.prompt(
+                    f"{user}> ", 
+                    style=style
+                )
+                
+                if not user_input.strip():
+                    continue
+
+                # Check for slash commands
+                if user_input.startswith("/"):
+                    parts = user_input.split()
+                    cmd = parts[0].lower()
+                    args = parts[1:]
+                    
+                    # Dispatch via registry
+                    if cmd_lib.registry.get_command(cmd):
+                        cmd_lib.registry.dispatch(cmd, args, ctx)
+                        continue
+                    else:
+                        console.print(f"[yellow]Unknown command: {cmd}. Type /help for available commands.[/yellow]")
+                        continue
+                
+                # Normal chat interaction
+                if user_input.lower() in ('exit', 'quit'): # Keep legacy exit support without slash
+                    break
+
+                with console.status("[bold green]Thinking..."):
+                    # Default to asking for permission for all tools for now, or configurable
+                    # For this implementation, we'll set a default policy of "ask" to demonstrate the feature
+                    response_data = client.run_task(user_input, permissions={"default": "ask"})
+                
+                # Handle approval loop (if response is dict with status)
+                while isinstance(response_data, dict) and response_data.get("status") == "needs_approval":
+                    tool_call = response_data.get("tool_call", {})
+                    tool_name = tool_call.get("tool_name")
+                    tool_args = tool_call.get("tool_args")
+                    tool_call_id = tool_call.get("tool_call_id")  # Extract the ID
+                    
+                    console.print(Panel(
+                        f"Tool: [bold cyan]{tool_name}[/bold cyan]\\nArgs: {tool_args}",
+                        title="[yellow]Approval Required[/yellow]",
+                        border_style="yellow"
+                    ))
+                    
+                    if typer.confirm("Allow this tool execution?"):
+                        with console.status("[bold green]Executing tool..."):
+                            response_data = client.run_task(
+                                user_input, 
+                                tool_approval={
+                                    "approved": True,
+                                    "tool_name": tool_name,
+                                    "tool_args": tool_args,
+                                    "tool_call_id": tool_call_id,
+                                    "invocation_id": tool_call.get("invocation_id")
+                                }
+                            )
+                    else:
+                        with console.status("[bold red]Denying tool..."):
+                            response_data = client.run_task(
+                                user_input, 
+                                tool_approval={
+                                    "approved": False,
+                                    "tool_name": tool_name,
+                                    "tool_args": tool_args,
+                                    "tool_call_id": tool_call_id,
+                                    "invocation_id": tool_call.get("invocation_id")
+                                }
+                            )
+
+
+                # ADK returns an array of events, we need to extract the text from model responses
+                response_text = ""
+                if isinstance(response_data, list):
+                    for event in response_data:
+                        if event.get("content", {}).get("role") == "model":
+                            parts = event.get("content", {}).get("parts", [])
+                            for part in parts:
+                                if "text" in part:
+                                    response_text += part["text"]
+                else:
+                    # Fallback for old format
+                    response_text = response_data.get("response", "No response")
+                
+                if response_text:
+                    console.print(Markdown(response_text))
+                else:
+                    console.print("[yellow]No text response from agent[/yellow]")
+                console.print() # Add some spacing
+
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Goodbye![/yellow]")
+                break
+            except Exception as e:
+                console.print(f"[red]Error:[/red] {e}")
+                
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+
+@app.command()
+def config():
+    """
+    Show current configuration.
+    """
+    user = config_manager.get_user()
+    url = config_manager.get_agent_url()
+    
+    console.print(Panel(f"Username: [bold]{user}[/bold]\nAgent URL: [blue]{url}[/blue]", title="Current Configuration"))
+
+@app.command()
+def resume(
+    session_id: Optional[str] = typer.Argument(None, help="Session ID to resume")
+):
+    """
+    Resume a chat session. If no ID provided, allows interactive selection.
+    """
+    # Reuse chat command logic but initialize with specific resume logic if needed
+    # Actually, 'resume' as a standalone command implies starting chat in that session.
+    # So we can just call chat(resume=session_id) but we need to handle the interactive part BEFORE calling chat
+    # OR we can make chat() handle the interactive part if resume is True but no ID?
+    # Typer doesn't easily support "flag present but no value" for Option if it expects a string.
+    # Let's keep it simple: 'dak-cli resume' calls interactive selection then starts chat.
+    
+    try:
+        client = AgentClient() # Temp client to list sessions
+        user = config_manager.get_user()
+        if not user:
+            console.print("[red]Not logged in. Please run 'dak-cli login' first.[/red]")
+            return
+
+        ctx = cmd_lib.CommandContext(client, console, config_manager)
+        
+        if not session_id:
+            # Interactive selection
+            cmd_lib.resume_session(ctx)
+            session_id = ctx.client.session_id
+            if not session_id: # User cancelled
+                return
+
+        # Start chat with selected session
+        chat(resume=session_id)
+
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+
+
+history_app = typer.Typer(help="Manage chat history")
+app.add_typer(history_app, name="history")
+
+@history_app.command("list")
+def list_sessions():
+    """
+    List all chat sessions.
+    """
+    client = AgentClient()
+    ctx = cmd_lib.CommandContext(client, console, config_manager)
+    cmd_lib.list_sessions(ctx)
+
+@history_app.command("show")
+def show_session(session_id: str):
+    """
+    Show details of a specific chat session.
+    """
+    client = AgentClient()
+    ctx = cmd_lib.CommandContext(client, console, config_manager)
+    cmd_lib.show_session_history(ctx, session_id)
+
+@history_app.command("delete")
+def delete_session(session_id: str):
+    """
+    Delete a specific chat session.
+    """
+    client = AgentClient()
+    ctx = cmd_lib.CommandContext(client, console, config_manager)
+    if typer.confirm(f"Are you sure you want to delete session {session_id}?", default=False):
+        cmd_lib.delete_session(ctx, session_id, confirm=False)
+    else:
+        console.print("[yellow]Deletion cancelled.[/yellow]")
+
+
+if __name__ == "__main__":
+    app()
