@@ -75,6 +75,7 @@ ask_question_tool = FunctionTool(ask_question, require_confirmation=False)
 after_model_callback = None
 instruction = 'You are a helpful assistant powered by the Decentralized Agent Kit.'
 
+root_agent_tools = [mcp_toolset]
 if os.getenv("ENABLE_ENFORCER_MODE", "false").lower() == "true":
     after_model_callback = enforcer_validator
     instruction = '''You are a helpful assistant powered by the Decentralized Agent Kit.
@@ -88,12 +89,14 @@ Workflow:
 4. For other actions: Use appropriate tools (read_file, run_command, etc.)
 
 You can ONLY output text AFTER calling `ask_question` or `attempt_answer`. Otherwise you MUST call a tool.'''
+    # Add Enforcer-specific tools only in Enforcer Mode
+    root_agent_tools.extend([system_retry_tool, attempt_answer_tool, ask_question_tool])
 
 root_agent = LlmAgent(
     # model='gemini-3-pro-preview',
     model='gemini-2.5-flash',
     name='dak_agent',
     instruction=instruction,
-    tools=[mcp_toolset, system_retry_tool, attempt_answer_tool, ask_question_tool],
+    tools=root_agent_tools,
     after_model_callback=after_model_callback
 )
