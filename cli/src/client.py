@@ -111,7 +111,7 @@ class AgentClient:
                 f"{self.base_url}/run",
                 json=payload,
                 headers=self._get_headers(),
-                timeout=60
+                timeout=300
             )
             response.raise_for_status()
             response_data = response.json()
