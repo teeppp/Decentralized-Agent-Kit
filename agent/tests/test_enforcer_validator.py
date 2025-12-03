@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
-from dak_agent.enforcer_validator import enforcer_validator
+from dak_agent.enforcer_validator import enforcer_validator, SessionState
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
@@ -9,6 +9,7 @@ class TestEnforcerValidator(unittest.TestCase):
         self.callback_context = MagicMock()
         self.callback_context.session = MagicMock()
         self.callback_context.session.contents = []
+        self.session_state = SessionState()
 
     def test_allow_tool_call(self):
         # Create a response with a function call
@@ -21,7 +22,7 @@ class TestEnforcerValidator(unittest.TestCase):
             )
         )
         
-        result = enforcer_validator(response, self.callback_context)
+        result = enforcer_validator(response, self.callback_context, self.session_state)
         self.assertIsNone(result, "Should allow response with tool call")
 
     def test_block_text_only_no_history(self):
@@ -33,7 +34,7 @@ class TestEnforcerValidator(unittest.TestCase):
             )
         )
         
-        result = enforcer_validator(response, self.callback_context)
+        result = enforcer_validator(response, self.callback_context, self.session_state)
         self.assertIsNotNone(result, "Should block text-only response")
         
         # Verify it returns a system_retry function call
@@ -60,7 +61,7 @@ class TestEnforcerValidator(unittest.TestCase):
             )
         )
         
-        result = enforcer_validator(response, self.callback_context)
+        result = enforcer_validator(response, self.callback_context, self.session_state)
         self.assertIsNotNone(result, "Should block text response - enforcer mode blocks all text")
         
         # Verify it returns a system_retry function call
@@ -86,7 +87,7 @@ class TestEnforcerValidator(unittest.TestCase):
             )
         )
         
-        result = enforcer_validator(response, self.callback_context)
+        result = enforcer_validator(response, self.callback_context, self.session_state)
         self.assertIsNotNone(result, "Should block text response - enforcer mode blocks all text")
         
         # Verify it returns a system_retry function call
@@ -112,7 +113,7 @@ class TestEnforcerValidator(unittest.TestCase):
             )
         )
         
-        result = enforcer_validator(response, self.callback_context)
+        result = enforcer_validator(response, self.callback_context, self.session_state)
         self.assertIsNotNone(result, "Should block text response after non-terminal tool")
         
         # Verify it returns a system_retry function call

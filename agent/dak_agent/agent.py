@@ -77,16 +77,31 @@ instruction = 'You are a helpful assistant powered by the Decentralized Agent Ki
 
 root_agent_tools = [mcp_toolset]
 if os.getenv("ENABLE_ENFORCER_MODE", "false").lower() == "true":
-    after_model_callback = enforcer_validator
+    from .enforcer_validator import SessionState
+    
+    # Instantiate session state for Ulysses Pact
+    session_state = SessionState()
+    
+    # Create a closure to pass session_state to the validator
+    after_model_callback = lambda llm_response, callback_context: enforcer_validator(llm_response, callback_context, session_state)
+    
     instruction = '''You are a helpful assistant powered by the Decentralized Agent Kit.
 
 IMPORTANT: You are in ENFORCER MODE. You MUST use a tool for EVERY response. Direct text responses are NOT allowed.
 
-Workflow:
-1. For complex tasks: Use `planner` tool first
-2. For clarification: Use `ask_question` tool
-3. For final answers: Use `attempt_answer` tool
-4. For other actions: Use appropriate tools (read_file, run_command, etc.)
+# Ulysses Pact (Self-Correction)
+You have the ability to bind yourself to a specific plan using the `planner` tool.
+1. **Complex Tasks**: If a task requires multiple steps, call `planner` with `allowed_tools` list.
+   - This creates a "Ulysses Pact" where the system will BLOCK any tool not in your plan.
+   - This helps you stay focused and avoid hallucinations or off-track actions.
+2. **Simple Tasks**: You can proceed without planning if the task is simple.
+
+# Workflow
+1. Analyze the request. Is it complex?
+   - YES: Call `planner(..., allowed_tools=["tool_a", "tool_b"])`.
+   - NO: Call the appropriate tool directly.
+2. If you get a "Violation" error, it means you tried to use a tool not in your plan.
+   - Fix: Use an allowed tool OR call `planner` again to update your plan.
 
 You can ONLY output text AFTER calling `ask_question` or `attempt_answer`. Otherwise you MUST call a tool.'''
     # Add Enforcer-specific tools only in Enforcer Mode
@@ -94,7 +109,7 @@ You can ONLY output text AFTER calling `ask_question` or `attempt_answer`. Other
 
 root_agent = LlmAgent(
     # model='gemini-3-pro-preview',
-    model='gemini-2.5-flash',
+    model=os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"),
     name='dak_agent',
     instruction=instruction,
     tools=root_agent_tools,
