@@ -81,20 +81,48 @@ def run(prompt: str):
                         }
                     )
 
-        # ADK returns an array of events, we need to extract the text from model responses
+        # ADK returns an array of events, extract both model text and function responses
         response_text = ""
+        function_outputs = []
+        
         if isinstance(response_data, list):
             for event in response_data:
-                if event.get("content", {}).get("role") == "model":
-                    parts = event.get("content", {}).get("parts", [])
-                    for part in parts:
-                        if "text" in part:
-                            response_text += part["text"]
+                content = event.get("content", {})
+                role = content.get("role")
+                parts = content.get("parts", [])
+                
+                for part in parts:
+                    # Extract text from model
+                    if "text" in part and role == "model":
+                        response_text += part["text"]
+                    
+                    # Extract function_response output
+                    if "functionResponse" in part:
+                        func_resp = part["functionResponse"]
+                        response_content = func_resp.get("response", {})
+                        # response_content might be a string or dict
+                        if isinstance(response_content, str):
+                            function_outputs.append(response_content)
+                        elif isinstance(response_content, dict):
+                            # Try to extract a displayable string
+                            text_output = response_content.get("text", response_content.get("result", str(response_content)))
+                            function_outputs.append(text_output)
         else:
             # Fallback for old format
             response_text = response_data.get("response", "No response")
         
-        console.print(Panel(Markdown(response_text), title="Agent Response", border_style="blue"))
+        # Combine outputs - function outputs first, then model text
+        final_output = "\n".join(function_outputs)
+        if response_text:
+            if final_output:
+                final_output += "\n" + response_text
+            else:
+                final_output = response_text
+        
+        if final_output:
+            console.print(Panel(Markdown(final_output), title="Agent Response", border_style="blue"))
+        else:
+            console.print("[yellow]No response from agent[/yellow]")
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
 
@@ -211,23 +239,50 @@ def chat(
                             )
 
 
-                # ADK returns an array of events, we need to extract the text from model responses
+                # ADK returns an array of events, extract both model text and function responses
                 response_text = ""
+                function_outputs = []
+                
                 if isinstance(response_data, list):
                     for event in response_data:
-                        if event.get("content", {}).get("role") == "model":
-                            parts = event.get("content", {}).get("parts", [])
-                            for part in parts:
-                                if "text" in part:
-                                    response_text += part["text"]
+                        content = event.get("content", {})
+                        role = content.get("role")
+                        parts = content.get("parts", [])
+                        
+                        for part in parts:
+                            # Extract text from model
+                            if "text" in part and role == "model":
+                                response_text += part["text"]
+                            
+                            # Extract function_response output
+                            if "functionResponse" in part:
+                                func_resp = part["functionResponse"]
+                                response_content = func_resp.get("response", {})
+                                
+                                # response_content might be a string or dict
+                                if isinstance(response_content, str):
+                                    function_outputs.append(response_content)
+                                elif isinstance(response_content, dict):
+                                    # Try to extract a displayable string
+                                    text_output = response_content.get("text", response_content.get("result", str(response_content)))
+                                    function_outputs.append(text_output)
                 else:
                     # Fallback for old format
                     response_text = response_data.get("response", "No response")
                 
+                # Combine outputs - function outputs first, then model text
+                final_output = "\n".join(function_outputs)
+                
                 if response_text:
-                    console.print(Markdown(response_text))
+                    if final_output:
+                        final_output += "\n" + response_text
+                    else:
+                        final_output = response_text
+                
+                if final_output:
+                    console.print(Markdown(final_output))
                 else:
-                    console.print("[yellow]No text response from agent[/yellow]")
+                    console.print("[yellow]No response from agent[/yellow]")
                 console.print() # Add some spacing
 
 

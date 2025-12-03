@@ -104,6 +104,18 @@ async def search_files(pattern: str, path: str = ".") -> str:
     except Exception as e:
         return f"Error searching files: {e}"
 
+@mcp.tool()
+async def planner(task_description: str, plan_steps: list[str], estimated_complexity: str) -> str:
+    """
+    Create a plan for a complex task.
+    Args:
+        task_description: Description of the task to plan for.
+        plan_steps: Ordered list of steps to accomplish the task.
+        estimated_complexity: One of: "simple", "moderate", "complex".
+    """
+    plan_str = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
+    return f"Plan recorded for '{task_description}' (Complexity: {estimated_complexity}):\n{plan_str}"
+
 @contextlib.asynccontextmanager
 async def lifespan(app: Starlette):
     # Switch to the projects directory to ensure tools operate on the user's workspace
