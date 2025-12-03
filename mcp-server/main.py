@@ -104,6 +104,24 @@ async def search_files(pattern: str, path: str = ".") -> str:
     except Exception as e:
         return f"Error searching files: {e}"
 
+@mcp.tool()
+async def planner(task_description: str, plan_steps: list[str], allowed_tools: list[str] = []) -> str:
+    """
+    Create a plan and restrict future actions to specific tools (Ulysses Pact).
+    Args:
+        task_description: Description of the task to plan for.
+        plan_steps: Ordered list of steps to accomplish the task.
+        allowed_tools: List of tool names you intend to use (e.g. ["read_file", "run_command"]).
+                       'planner', 'ask_question', 'attempt_answer' are always allowed.
+    """
+    plan_str = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
+    
+    restriction_msg = ""
+    if allowed_tools:
+        restriction_msg = f"\n\n[System] Ulysses Pact Active: You are now restricted to using only: {', '.join(allowed_tools)}"
+    
+    return f"Plan recorded for '{task_description}':\n{plan_str}{restriction_msg}"
+
 @contextlib.asynccontextmanager
 async def lifespan(app: Starlette):
     # Switch to the projects directory to ensure tools operate on the user's workspace
