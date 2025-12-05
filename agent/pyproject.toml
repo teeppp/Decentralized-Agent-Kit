@@ -3,7 +3,7 @@ name = "dak-agent"
 version = "0.1.0"
 description = "Decentralized Agent Kit Agent with A2A and MCP support"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "google-adk[a2a]>=0.1.0",
     "mcp>=0.1.0",
@@ -17,6 +17,11 @@ dependencies = [
     "pyjwt[crypto]>=2.10.1",
     "PyYAML>=6.0.1",
     "psycopg2-binary>=2.9.0",
+    "langfuse>=2.53.0",
+    "openinference-instrumentation>=0.1.0",
+    "openinference-instrumentation-google-adk>=0.1.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
 ]
 
 [build-system]

@@ -1,30 +1,36 @@
 from google.adk.agents import LlmAgent
 from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
 from .enforcer_validator import enforcer_validator
+import logging
 import os
+
+logger = logging.getLogger(__name__)
+
 # Langfuse OpenTelemetry Instrumentation
 try:
+    logger.warning("[Langfuse] Initializing instrumentation...")
     from openinference.instrumentation.google_adk import GoogleADKInstrumentor
     from langfuse import get_client
     
     # Instrument Google ADK for OpenTelemetry tracing
     GoogleADKInstrumentor().instrument()
+    logger.warning("[Langfuse] Instrumentation initialized.")
     
     # Optional: Verify Langfuse authentication if environment variables are set
     if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
         try:
             langfuse = get_client()
             if langfuse.auth_check():
-                print("[Langfuse] Authentication successful - monitoring enabled")
-                from openinference.instrumentation.google_adk import GoogleADKInstrumentor
-                GoogleADKInstrumentor().instrument()
+                logger.warning("[Langfuse] Authentication successful - monitoring enabled")
             else:
-                print("[Langfuse] Authentication failed - check your credentials")
+                logger.warning("[Langfuse] Authentication failed - check your credentials")
         except Exception as e:
-            print(f"[Langfuse] Connection error: {e}")
+            logger.warning(f"[Langfuse] Connection error: {e}")
 except Exception as e:
     # Silently skip if Langfuse dependencies are not installed or incompatible
-    print(f"[Langfuse] Skipping instrumentation: {type(e).__name__}")
+    logger.warning(f"[Langfuse] Skipping instrumentation: {type(e).__name__} - {e}")
+    import traceback
+    traceback.print_exc()
     pass
 
 # MCP Server configuration
