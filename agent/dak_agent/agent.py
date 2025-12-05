@@ -2,6 +2,30 @@ from google.adk.agents import LlmAgent
 from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
 from .enforcer_validator import enforcer_validator
 import os
+# Langfuse OpenTelemetry Instrumentation
+try:
+    from openinference.instrumentation.google_adk import GoogleADKInstrumentor
+    from langfuse import get_client
+    
+    # Instrument Google ADK for OpenTelemetry tracing
+    GoogleADKInstrumentor().instrument()
+    
+    # Optional: Verify Langfuse authentication if environment variables are set
+    if os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"):
+        try:
+            langfuse = get_client()
+            if langfuse.auth_check():
+                print("[Langfuse] Authentication successful - monitoring enabled")
+                from openinference.instrumentation.google_adk import GoogleADKInstrumentor
+                GoogleADKInstrumentor().instrument()
+            else:
+                print("[Langfuse] Authentication failed - check your credentials")
+        except Exception as e:
+            print(f"[Langfuse] Connection error: {e}")
+except Exception as e:
+    # Silently skip if Langfuse dependencies are not installed or incompatible
+    print(f"[Langfuse] Skipping instrumentation: {type(e).__name__}")
+    pass
 
 # MCP Server configuration
 mcp_url = os.getenv("MCP_SERVER_URL", "http://mcp-server:8000/mcp")
@@ -17,7 +41,13 @@ mcp_toolset = PatchedMcpToolset(
     require_confirmation=True
 )
 
-# Define system_retry tool locally to avoid confirmation
+from google.adk.tools import FunctionTool
+
+# =====================================
+# BUILT-IN CONTROL TOOLS
+# These are agent control tools that should NEVER be filtered
+# =====================================
+
 def system_retry(error_message: str) -> str:
     """
     INTERNAL TOOL. Do not use this tool directly.
@@ -35,7 +65,6 @@ NEXT ACTION REQUIRED: You MUST call one of these tools NOW:
 
 DO NOT respond with text. CALL A TOOL."""
 
-# Define terminal tools that end the agent loop
 def attempt_answer(answer: str, confidence: str, sources_used: list[str], tool_context) -> str:
     """
     Provide a final answer to the user.
@@ -66,16 +95,51 @@ def ask_question(questions: list[str], context: str, tool_context) -> str:
     questions_str = "\n".join([f"- {q}" for q in questions])
     return f"Context: {context}\n\nQuestions for user:\n{questions_str}\n\n(Waiting for user response...)"
 
-from google.adk.tools import FunctionTool
+def planner(task_description: str, plan_steps: list[str], allowed_tools: list[str] = []) -> str:
+    """
+    Create a plan and restrict future actions to specific tools (Ulysses Pact).
+    Args:
+        task_description: Description of the task to plan for.
+        plan_steps: Ordered list of steps to accomplish the task.
+        allowed_tools: List of tool names you intend to use (e.g. ["read_file", "run_command"]).
+                       'planner', 'ask_question', 'attempt_answer', 'switch_mode' are always allowed.
+    """
+    plan_str = "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan_steps)])
+    
+    restriction_msg = ""
+    if allowed_tools:
+        restriction_msg = f"\n\n[System] Ulysses Pact Active: You are now restricted to using only: {', '.join(allowed_tools)}"
+    
+    return f"Plan recorded for '{task_description}':\n{plan_str}{restriction_msg}"
+
+def switch_mode(reason: str, new_focus: str) -> str:
+    """
+    Request a mode switch when you feel the conversation has shifted
+    or the context is becoming too heavy.
+    
+    Args:
+        reason: Why you want to switch modes (e.g., "Context is heavy", "New phase started")
+        new_focus: What the new mode should focus on
+    
+    This tool triggers the Mode Manager to create a new, focused configuration.
+    """
+    return f"Mode switch requested: {reason}. New focus: {new_focus}"
+
+# Create FunctionTool instances
 system_retry_tool = FunctionTool(system_retry, require_confirmation=False)
 attempt_answer_tool = FunctionTool(attempt_answer, require_confirmation=False)
 ask_question_tool = FunctionTool(ask_question, require_confirmation=False)
+planner_tool = FunctionTool(planner, require_confirmation=False)
+switch_mode_tool = FunctionTool(switch_mode, require_confirmation=False)
 
 # Define the root agent
 after_model_callback = None
 instruction = 'You are a helpful assistant powered by the Decentralized Agent Kit.'
 
-root_agent_tools = [mcp_toolset]
+# Built-in control tools that are ALWAYS available (never filtered)
+# These are added separately from mcp_toolset so they survive mode switching
+root_agent_tools = [mcp_toolset, planner_tool, switch_mode_tool]
+
 if os.getenv("ENABLE_ENFORCER_MODE", "false").lower() == "true":
     from .enforcer_validator import SessionState
     
@@ -102,13 +166,19 @@ You have the ability to bind yourself to a specific plan using the `planner` too
    - NO: Call the appropriate tool directly.
 2. If you get a "Violation" error, it means you tried to use a tool not in your plan.
    - Fix: Use an allowed tool OR call `planner` again to update your plan.
+3. **Context Management**: If you feel the conversation is getting too long or you are shifting to a completely new phase of the task:
+   - Call `switch_mode(reason="...", new_focus="...")`.
+   - This will refresh your context and tools for the new phase.
 
 You can ONLY output text AFTER calling `ask_question` or `attempt_answer`. Otherwise you MUST call a tool.'''
     # Add Enforcer-specific tools only in Enforcer Mode
     root_agent_tools.extend([system_retry_tool, attempt_answer_tool, ask_question_tool])
 
-root_agent = LlmAgent(
-    # model='gemini-3-pro-preview',
+from .adaptive_agent import AdaptiveAgent
+
+# Define the root agent
+# We wrap the standard LlmAgent with our AdaptiveAgent to enable dynamic mode switching
+root_agent = AdaptiveAgent(
     model=os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"),
     name='dak_agent',
     instruction=instruction,

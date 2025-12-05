@@ -4,6 +4,9 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 from dak_agent.enforcer_validator import enforcer_validator, SessionState
 
+# Marker used by enforcer to indicate blocked response
+ENFORCER_BLOCKED_MARKER = "[ENFORCER_BLOCKED]"
+
 @pytest.fixture
 def session_state():
     return SessionState()
@@ -29,14 +32,23 @@ def create_llm_response(tool_name=None, tool_args=None, text_content=None):
         content=types.Content(parts=parts, role="model")
     )
 
+def get_text_from_response(result):
+    """Helper to extract text from enforcement error response."""
+    if result and result.content and result.content.parts:
+        for part in result.content.parts:
+            if hasattr(part, 'text') and part.text:
+                return part.text
+    return ""
+
 def test_direct_text_blocked(session_state, mock_context):
     """Test that direct text without tool calls is blocked."""
     response = create_llm_response(text_content="Hello world")
     result = enforcer_validator(response, mock_context, session_state)
     
     assert result is not None
-    assert result.content.parts[0].function_call.name == "system_retry"
-    assert "Direct responses are not allowed" in result.content.parts[0].function_call.args["error_message"]
+    text = get_text_from_response(result)
+    assert ENFORCER_BLOCKED_MARKER in text
+    assert "Direct responses are not allowed" in text
 
 def test_planner_sets_state(session_state, mock_context):
     """Test that calling planner updates the allowed tools."""
@@ -70,9 +82,10 @@ def test_disallowed_tool_blocked(session_state, mock_context):
     result = enforcer_validator(response, mock_context, session_state)
     
     assert result is not None
-    assert result.content.parts[0].function_call.name == "system_retry"
-    assert "Violation" in result.content.parts[0].function_call.args["error_message"]
-    assert "write_file" in result.content.parts[0].function_call.args["error_message"]
+    text = get_text_from_response(result)
+    assert ENFORCER_BLOCKED_MARKER in text
+    assert "Violation" in text
+    assert "write_file" in text
 
 def test_no_plan_allows_any_tool(session_state, mock_context):
     """Test that without a plan, any tool is allowed (except direct text)."""

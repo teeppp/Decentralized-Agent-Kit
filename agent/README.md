@@ -144,8 +144,30 @@ Get agent capabilities.
 | `SESSION_SERVICE_URI` | No | `postgresql://...` | PostgreSQL connection string |
 | `MCP_SERVER_URL` | No | `http://mcp-server:8000/mcp` | MCP Server URL |
 | `NEXTAUTH_SECRET` | No | - | NextAuth.js secret for JWT validation |
+| `LANGFUSE_PUBLIC_KEY` | No | - | Langfuse public key for monitoring |
+| `LANGFUSE_SECRET_KEY` | No | - | Langfuse secret key for monitoring |
+| `LANGFUSE_BASE_URL` | No | `https://cloud.langfuse.com` | Langfuse API endpoint |
 
 *At least one LLM provider API key is required
+
+### Monitoring with Langfuse
+
+The agent integrates with [Langfuse](https://langfuse.com) for observability via OpenTelemetry. All tool calls and model completions are automatically traced when configured.
+
+**Setup**:
+
+1. Create a free account at [cloud.langfuse.com](https://cloud.langfuse.com)
+2. Get your public and secret keys from project settings
+3. Set environment variables:
+   ```bash
+   LANGFUSE_PUBLIC_KEY=pk-lf-...
+   LANGFUSE_SECRET_KEY=sk-lf-...
+   LANGFUSE_BASE_URL=https://cloud.langfuse.com  # EU region (default)
+   # or https://us.cloud.langfuse.com for US region
+   ```
+4. Restart the agent - traces will appear in your Langfuse dashboard
+
+**Note**: Langfuse is completely optional. The agent works normally without it.
 
 ### Dependencies
 

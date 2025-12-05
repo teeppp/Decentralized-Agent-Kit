@@ -16,6 +16,45 @@ from .config import ConfigManager
 from .client import AgentClient
 from . import commands as cmd_lib
 
+# Marker used by enforcer_validator to indicate a blocked response
+ENFORCER_BLOCKED_MARKER = "[ENFORCER_BLOCKED]"
+MAX_ENFORCER_RETRIES = 3  # Maximum auto-retries when enforcer blocks response
+
+def _extract_response_text(response_data) -> tuple[str, list]:
+    """
+    Extract model text and function outputs from ADK response.
+    Returns (response_text, function_outputs)
+    """
+    response_text = ""
+    function_outputs = []
+    
+    if isinstance(response_data, list):
+        for event in response_data:
+            content = event.get("content", {})
+            role = content.get("role")
+            parts = content.get("parts", [])
+            
+            for part in parts:
+                # Extract text from model
+                if "text" in part and role == "model":
+                    response_text += part["text"]
+                
+                # Extract function_response output
+                if "functionResponse" in part:
+                    func_resp = part["functionResponse"]
+                    response_content = func_resp.get("response", {})
+                    
+                    if isinstance(response_content, str):
+                        function_outputs.append(response_content)
+                    elif isinstance(response_content, dict):
+                        text_output = response_content.get("text", response_content.get("result", str(response_content)))
+                        function_outputs.append(text_output)
+    else:
+        # Fallback for old format
+        response_text = response_data.get("response", "No response") if isinstance(response_data, dict) else ""
+    
+    return response_text, function_outputs
+
 app = typer.Typer(help="DAK CLI - Decentralized Agent Kit Command Line Interface")
 console = Console()
 config_manager = ConfigManager()
@@ -238,37 +277,8 @@ def chat(
                                 }
                             )
 
-
-                # ADK returns an array of events, extract both model text and function responses
-                response_text = ""
-                function_outputs = []
-                
-                if isinstance(response_data, list):
-                    for event in response_data:
-                        content = event.get("content", {})
-                        role = content.get("role")
-                        parts = content.get("parts", [])
-                        
-                        for part in parts:
-                            # Extract text from model
-                            if "text" in part and role == "model":
-                                response_text += part["text"]
-                            
-                            # Extract function_response output
-                            if "functionResponse" in part:
-                                func_resp = part["functionResponse"]
-                                response_content = func_resp.get("response", {})
-                                
-                                # response_content might be a string or dict
-                                if isinstance(response_content, str):
-                                    function_outputs.append(response_content)
-                                elif isinstance(response_content, dict):
-                                    # Try to extract a displayable string
-                                    text_output = response_content.get("text", response_content.get("result", str(response_content)))
-                                    function_outputs.append(text_output)
-                else:
-                    # Fallback for old format
-                    response_text = response_data.get("response", "No response")
+                # Use helper function to extract response
+                response_text, function_outputs = _extract_response_text(response_data)
                 
                 # Combine outputs - function outputs first, then model text
                 final_output = "\n".join(function_outputs)
@@ -279,8 +289,36 @@ def chat(
                     else:
                         final_output = response_text
                 
+                # Check for ENFORCER_BLOCKED and auto-retry
+                enforcer_retries = 0
+                while ENFORCER_BLOCKED_MARKER in final_output and enforcer_retries < MAX_ENFORCER_RETRIES:
+                    enforcer_retries += 1
+                    console.print(f"[yellow]⚠️ Enforcer blocked response (retry {enforcer_retries}/{MAX_ENFORCER_RETRIES})...[/yellow]")
+                    
+                    # Send a retry prompt that encourages tool usage
+                    retry_prompt = "You must use a tool to respond. Please use planner, ask_question, attempt_answer, or another available tool. Do not respond with plain text."
+                    
+                    with console.status("[bold green]Retrying with tool prompt..."):
+                        response_data = client.run_task(retry_prompt, permissions={"default": "ask"})
+                    
+                    # Extract new response
+                    response_text, function_outputs = _extract_response_text(response_data)
+                    final_output = "\n".join(function_outputs)
+                    if response_text:
+                        if final_output:
+                            final_output += "\n" + response_text
+                        else:
+                            final_output = response_text
+                
+                # If still blocked after max retries, show the error
+                if ENFORCER_BLOCKED_MARKER in final_output:
+                    console.print(f"[red]⚠️ Model failed to use tools after {MAX_ENFORCER_RETRIES} attempts.[/red]")
+                    console.print("[yellow]The following error was returned:[/yellow]")
+                
                 if final_output:
-                    console.print(Markdown(final_output))
+                    # Filter out the marker for cleaner display
+                    display_output = final_output.replace(ENFORCER_BLOCKED_MARKER, "⚠️ BLOCKED:") if ENFORCER_BLOCKED_MARKER in final_output else final_output
+                    console.print(Markdown(display_output))
                 else:
                     console.print("[yellow]No response from agent[/yellow]")
                 console.print() # Add some spacing

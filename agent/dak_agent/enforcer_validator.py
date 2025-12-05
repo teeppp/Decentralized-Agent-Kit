@@ -18,7 +18,7 @@ class SessionState:
     def set_plan(self, tools: List[str]):
         self.active_plan = True
         # Always allow these core tools
-        defaults = {"planner", "ask_question", "attempt_answer", "deep_think", "system_retry"}
+        defaults = {"planner", "ask_question", "attempt_answer", "deep_think", "system_retry", "switch_mode"}
         self.allowed_tools = set(tools) | defaults
         print(f"[Enforcer] Plan set! Allowed tools: {self.allowed_tools}")
 
@@ -63,7 +63,7 @@ Available Tools:
 
 You CANNOT just write text. You MUST call a tool.
 """
-        return _create_system_retry(error_message)
+        return _create_enforcement_error(error_message)
 
     # 2. Process tool calls
     for tool_call in tool_calls:
@@ -93,21 +93,40 @@ Action:
 1. Use an allowed tool.
 2. OR call 'planner' again to update your plan and allowed tools.
 """
-                return _create_system_retry(error_message)
+                return _create_enforcement_error(error_message)
 
     return None  # Allow response
 
-def _create_system_retry(error_message: str) -> LlmResponse:
+class EnforcerBlockedError(Exception):
+    """Exception raised when enforcer blocks a response."""
+    pass
+
+def _create_enforcement_error(error_message: str) -> LlmResponse:
+    """
+    Creates a text-based enforcement error response.
+    
+    This approach works with all Gemini models including Gemini 3 Pro,
+    which requires thought_signature for function calls. By using text
+    instead of a function call, we avoid this API limitation.
+    
+    The [ENFORCER_BLOCKED] marker allows clients (CLI/UI) to detect
+    these errors and automatically retry.
+    """
+    formatted_message = f"""[ENFORCER_BLOCKED]
+{error_message}
+
+---
+[This response was blocked by Enforcer Mode. The model must use a tool to proceed.]
+"""
+    # Return the error response - this ends the current turn
+    # The client CLI will detect [ENFORCER_BLOCKED] and handle retry
     return LlmResponse(
         content=types.Content(
             parts=[
-                types.Part(
-                    function_call=types.FunctionCall(
-                        name="system_retry",
-                        args={"error_message": error_message}
-                    )
-                )
+                types.Part(text=formatted_message)
             ],
             role="model"
-        )
+        ),
+        # Signal that we want to stop processing
+        turn_complete=True
     )
