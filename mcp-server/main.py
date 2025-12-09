@@ -104,24 +104,7 @@ async def search_files(pattern: str, path: str = ".") -> str:
     except Exception as e:
         return f"Error searching files: {e}"
 
-@mcp.tool()
-async def list_available_tools() -> str:
-    """
-    List all available tools on this MCP server.
-    Use this to discover what tools are available before requesting a mode switch.
-    """
-    tool_list = []
-    # FastMCP stores tools in _tool_manager
-    if hasattr(mcp, '_tool_manager') and hasattr(mcp._tool_manager, '_tools'):
-        for name, tool_info in mcp._tool_manager._tools.items():
-            description = tool_info.description if hasattr(tool_info, 'description') else "No description"
-            tool_list.append(f"- {name}: {description}")
-    else:
-        # Fallback: try to get tools from mcp directly
-        # FastMCP might expose tools differently in different versions
-        tool_list.append("Unable to introspect tools. MCP server structure unknown.")
-    
-    return "AVAILABLE MCP TOOLS:\n" + "\n".join(tool_list)
+
 
 
 @contextlib.asynccontextmanager

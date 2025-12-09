@@ -118,22 +118,18 @@ def planner(task_description: str, plan_steps: list[str], allowed_tools: list[st
     
     return f"Plan recorded for '{task_description}':\n{plan_str}{restriction_msg}"
 
-def switch_mode(reason: str = "", new_focus: str = "", request_tool_list: bool = False) -> str:
+def switch_mode(reason: str = "", new_focus: str = "") -> str:
     """
-    Request a mode switch or query available tools.
+    Request a mode switch.
     
     Args:
         reason: Why you want to switch modes (e.g., "Need to use File System tools").
         new_focus: What the new mode should focus on (e.g., "File Operations").
-        request_tool_list: Set to True to see a list of ALL available tools in the system.
     
     Workflow:
-    1. If you don't know what tools are available, call `switch_mode(request_tool_list=True)`.
-    2. Review the tool list returned by the system.
-    3. Call `switch_mode(reason="...", new_focus="...")` to switch to a mode that includes the desired tools.
+    1. If you don't know what tools are available, call `list_available_tools` first.
+    2. Call `switch_mode(reason="...", new_focus="...")` to switch to a mode that includes the desired tools.
     """
-    if request_tool_list:
-        return "Requesting tool list..."
     return f"Mode switch requested: {reason}. New focus: {new_focus}"
 
 # Create FunctionTool instances

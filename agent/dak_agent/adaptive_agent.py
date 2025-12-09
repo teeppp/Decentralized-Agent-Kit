@@ -14,6 +14,7 @@ import inspect
 logger = logging.getLogger(__name__)
 
 
+from google.adk.tools import FunctionTool
 
 class AdaptiveAgent(LlmAgent):
     """
@@ -48,59 +49,27 @@ class AdaptiveAgent(LlmAgent):
         disable_mode_switching: bool = False,
         mcp_url: Optional[str] = None
     ):
+
+
         # Override switch_mode tool to have access to tools list
         # We do this BEFORE calling super().__init__ to ensure LlmAgent registers the correct tool.
         
-        from google.adk.tools import FunctionTool
-        
         # Define the custom tool function capturing 'tools' from argument
-        def switch_mode(reason: str = "", new_focus: str = "", request_tool_list: bool = False) -> str:
+        def switch_mode(reason: str = "", new_focus: str = "") -> str:
             """
-            Request a mode switch or query available tools.
+            Request a mode switch.
             
             Args:
                 reason: Why you want to switch modes (e.g., "Need to use File System tools").
                 new_focus: What the new mode should focus on (e.g., "File Operations").
-                request_tool_list: Set to True to see a list of ALL available tools in the system.
             
             Workflow:
-            1. If you don't know what tools are available, call `switch_mode(request_tool_list=True)`.
-            2. Review the tool list returned by the system.
-            3. Call `switch_mode(reason="...", new_focus="...")` to switch to a mode that includes the desired tools.
+            1. If you don't know what tools are available, call `list_available_tools` first.
+            2. Call `switch_mode(reason="...", new_focus="...")` to switch to a mode that includes the desired tools.
             """
-            if request_tool_list:
-                # Return list of all available tools
-                tool_descriptions = []
-                has_mcp_toolset = False
-                
-                # We need to access the CURRENT tools of the agent, or the ALL available tools?
-                # The user wants to see what is available in the SYSTEM, not just current mode.
-                # So we use the 'tools' argument passed to __init__ (which contains everything)
-                
-                for tool in tools:
-                    name = getattr(tool, 'name', str(type(tool).__name__))
-                    description = getattr(tool, 'description', "")
-                    
-                    # Handle McpToolset specially - we can't easily list all tools inside it synchronously here
-                    # without making an async call. But we can describe it.
-                    if 'McpToolset' in name or 'Toolset' in name:
-                        has_mcp_toolset = True
-                        continue
-                        
-                    tool_descriptions.append(f"- {name}: {description}")
-            
-                result = "AVAILABLE BUILT-IN TOOLS:\n" + "\n".join(tool_descriptions)
-                
-                if has_mcp_toolset:
-                    result += "\n\nNOTE: Additional tools are available from MCP server. "
-                    result += "To access them, first call `switch_mode(reason='Need MCP tools', new_focus='MCP Tool Discovery')`. "
-                    result += "After the mode switch, call `list_available_tools` to see all MCP tools."
-                
-                return result
-            
             return f"Mode switch requested: {reason}. New focus: {new_focus}"
 
-        # Create the overridden tool
+        # Create the overridden switch_mode tool
         # We need to find the existing switch_mode tool and replace it, or just add this one.
         # The 'tools' list passed in contains the original switch_mode tool.
         # We should replace it.
@@ -112,6 +81,10 @@ class AdaptiveAgent(LlmAgent):
                 modified_tools.append(FunctionTool(switch_mode, require_confirmation=False))
             else:
                 modified_tools.append(tool)
+        
+        # Add the local list_available_tools to modified_tools (which becomes builtin_tools)
+        # We use the instance method
+        modified_tools.append(FunctionTool(self.list_available_tools, require_confirmation=False))
         
         # Define a callback to gracefully handle tool errors (e.g., tool not found)
         def on_tool_error_handler(tool, args: dict, tool_context, error: Exception) -> Optional[dict]:
@@ -136,9 +109,8 @@ class AdaptiveAgent(LlmAgent):
                 return {"error": f"""Tool '{tool_name}' is not available in the current mode.
 
 Available actions:
-1. Call `switch_mode(request_tool_list=True)` to discover available tools.
-2. Call `list_available_tools` (if available) to see MCP server tools.
-3. Then call `switch_mode(new_focus='...')` to switch to a mode with the required tools.
+1. Call `list_available_tools` (always available) to see ALL tools.
+2. Then call `switch_mode(new_focus='...')` to switch to a mode with the required tools.
 
 Do NOT guess tool names. Use only tools that are explicitly available."""}
             else:
@@ -157,21 +129,17 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
 
         # Determine initial tools
         # If mode switching is enabled, start with minimal tools (Built-in + list_available_tools)
-        initial_tools = modified_tools
+        # list_available_tools is now part of builtin_tools
         
-        # Store MCP URL for later use
-        self._mcp_url = mcp_url or os.getenv("MCP_SERVER_URL", "http://mcp-server:8000/mcp")
-        logger.info(f"AdaptiveAgent initialized with MCP URL: {self._mcp_url}")
+        # Default initial tools
+        initial_tools = modified_tools
 
         if not disable_mode_switching and original_mcp_toolset:
-            logger.info("Initializing with minimal toolset (Built-in + list_available_tools)")
-            # Use McpToolset with filter instead of ProxyMcpToolset
-            filtered_mcp_toolset = McpToolset(
-                connection_params=StreamableHTTPConnectionParams(url=self._mcp_url),
-                tool_filter=['list_available_tools'],
-                require_confirmation=False
-            )
-            initial_tools = builtin_tools + [filtered_mcp_toolset]
+            logger.info("Initializing with minimal toolset (Built-in only)")
+            # We only include builtin_tools (which now includes the local list_available_tools).
+            # We do NOT include original_mcp_toolset initially.
+            
+            initial_tools = builtin_tools
 
         # Initialize the parent LlmAgent with initial tools
         super().__init__(
@@ -190,12 +158,57 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
         self._original_callback = after_model_callback
         self._disable_mode_switching = disable_mode_switching
         
+        # Store MCP URL
+        self._mcp_url = mcp_url or os.getenv("MCP_SERVER_URL", "http://mcp-server:8000/mcp")
+        logger.info(f"AdaptiveAgent initialized with MCP URL: {self._mcp_url}")
+        
         # Initialize LLM client for Meta-Agent
         try:
             self._meta_agent_client = genai.Client()
         except Exception as e:
             logger.warning(f"Failed to initialize GenAI client for Meta-Agent: {e}")
             self._meta_agent_client = None
+
+    async def list_available_tools(self) -> str:
+        """
+        List all available tools from the configured MCP server(s).
+        Use this to discover what tools are available before requesting a mode switch.
+        """
+        mcp_url = self._mcp_url
+        if not mcp_url:
+            return "No MCP server URL configured. Cannot list remote tools."
+        
+        try:
+            logger.info(f"Connecting to MCP server at: {mcp_url}")
+            # Create a temporary toolset to fetch tools
+            # We use a short timeout or default settings
+            temp_toolset = McpToolset(
+                connection_params=StreamableHTTPConnectionParams(url=mcp_url),
+                require_confirmation=False
+            )
+            
+            # Fetch tools
+            logger.info("Fetching tools from MCP server...")
+            tools = await temp_toolset.get_tools()
+            logger.info(f"Fetched {len(tools)} tools.")
+            
+            tool_list = []
+            for tool in tools:
+                name = getattr(tool, 'name', 'unknown')
+                description = getattr(tool, 'description', 'No description')
+                tool_list.append(f"- {name}: {description}")
+            
+            if not tool_list:
+                logger.warning("No tools found on MCP server.")
+                return "No tools found on the MCP server."
+                
+            result = "AVAILABLE MCP TOOLS:\n" + "\n".join(tool_list)
+            logger.info(f"Returning tool list: {result[:100]}...") # Log first 100 chars
+            return result
+            
+        except Exception as e:
+            logger.error(f"Failed to list available tools: {e}", exc_info=True)
+            return f"Error listing tools from MCP server: {e}"
 
 
     async def _wrapped_callback(self, llm_response: LlmResponse, callback_context: CallbackContext) -> Optional[LlmResponse]:
@@ -256,17 +269,10 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
                         logger.info(f"Switch Mode Args: {args}")
                         
                         # Check if this is a query for tool list
-                        if args.get("request_tool_list", False):
-                            logger.info("Switch mode requested tool list - Triggering Discovery Mode")
-                            self._mode_manager.request_switch(
-                                reason="Agent requested tool list via switch_mode(request_tool_list=True)",
-                                new_focus="Tool Discovery and Introspection"
-                            )
-                        else:
-                            self._mode_manager.request_switch(
-                                reason=args.get("reason", ""),
-                                new_focus=args.get("new_focus", "")
-                            )
+                        self._mode_manager.request_switch(
+                            reason=args.get("reason", ""),
+                            new_focus=args.get("new_focus", "")
+                        )
     
     def _estimate_context_tokens(self, callback_context: CallbackContext) -> int:
         """Estimate the number of tokens in the current context."""
@@ -373,6 +379,12 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
                 self._meta_agent_client,
                 requested_focus
             )
+            
+            # CRITICAL FIX: list_available_tools is already in self._builtin_tools.
+            # If Meta-Agent selects it, we must remove it from selected_tool_names to avoid creating a duplicate in the new McpToolset.
+            if "list_available_tools" in selected_tool_names:
+                selected_tool_names.remove("list_available_tools")
+                logger.info("Removed list_available_tools from selected tools (already built-in).")
             
             # Build new tool list
             new_tools = list(self._builtin_tools)  # Always include built-in tools (planner, switch_mode, etc.)

@@ -1,4 +1,4 @@
-import unittest
+import pytest
 from unittest.mock import MagicMock, patch
 from dak_agent.adaptive_agent import AdaptiveAgent
 from dak_agent.mode_manager import ModeManager
@@ -6,9 +6,10 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_response import LlmResponse
 from google.adk.tools import FunctionTool
 
-class TestAdaptiveAgentRefinement(unittest.TestCase):
+class TestAdaptiveAgentRefinement:
     
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def setup(self):
         self.mock_tools = [MagicMock(spec=FunctionTool)]
         self.mock_tools[0].name = "test_tool"
         self.agent = AdaptiveAgent(
@@ -22,7 +23,8 @@ class TestAdaptiveAgentRefinement(unittest.TestCase):
         self.agent._meta_agent_client = MagicMock()
         
     @patch('dak_agent.mode_manager.ModeManager.generate_mode_config')
-    def test_history_clearing_on_switch(self, mock_generate_config):
+    @pytest.mark.asyncio
+    async def test_history_clearing_on_switch(self, mock_generate_config):
         # Setup mock return for generate_mode_config
         mock_generate_config.return_value = ("New Instruction", ["test_tool"])
         
@@ -37,17 +39,18 @@ class TestAdaptiveAgentRefinement(unittest.TestCase):
         # Trigger switch manually via internal method for testing
         # We need to mock _extract_history_summary as well
         with patch.object(self.agent, '_extract_history_summary', return_value="Summary"):
-            self.agent._perform_mode_switch(mock_context)
+            await self.agent._perform_mode_switch(mock_context)
             
         # Verify instruction updated
-        self.assertEqual(self.agent.instruction, "New Instruction")
+        assert self.agent.instruction == "New Instruction"
         
         # Verify history cleared
         # Note: In the actual code we check if it's a list and clear it
         # Here we verify the clear method was called on the mock list
         mock_context.session.contents.clear.assert_called_once()
         
-    def test_switch_mode_tool_preservation(self):
+    @pytest.mark.asyncio
+    async def test_switch_mode_tool_preservation(self):
         # Ensure switch_mode is in builtin tools
         builtin_names = [t.name for t in self.agent._builtin_tools if hasattr(t, 'name')]
         # Note: In the test setup we passed a generic mock tool, so switch_mode might not be there unless we add it
@@ -64,11 +67,8 @@ class TestAdaptiveAgentRefinement(unittest.TestCase):
         with patch.object(self.agent, '_extract_history_summary', return_value="Summary"), \
              patch('dak_agent.mode_manager.ModeManager.generate_mode_config', return_value=("New", ["other_tool"])):
             
-            self.agent._perform_mode_switch(mock_context)
+            await self.agent._perform_mode_switch(mock_context)
             
             # Check if switch_mode is in the new tools list
             new_tool_names = [t.name for t in self.agent.tools if hasattr(t, 'name')]
-            self.assertIn("switch_mode", new_tool_names)
-
-if __name__ == '__main__':
-    unittest.main()
+            assert "switch_mode" in new_tool_names
