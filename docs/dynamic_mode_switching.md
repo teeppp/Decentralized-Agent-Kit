@@ -28,6 +28,8 @@ The mechanism consists of two main components:
 
 ### The Switching Process
 
+### The Switching Process
+
 ```mermaid
 sequenceDiagram
     participant User
@@ -35,10 +37,18 @@ sequenceDiagram
     participant ModeManager
     participant MetaLLM as Meta-Agent (LLM)
     participant InternalAgent as LlmAgent
+    participant MCPServer
 
     User->>AdaptiveAgent: Send Message
     AdaptiveAgent->>AdaptiveAgent: Increment Turn Count
     
+    alt Tool Discovery (Optional)
+        User->>AdaptiveAgent: "What tools do you have?"
+        AdaptiveAgent->>MCPServer: list_available_tools()
+        MCPServer-->>AdaptiveAgent: Tool List
+        AdaptiveAgent-->>User: Returns Tool List
+    end
+
     alt Threshold Exceeded
         AdaptiveAgent->>ModeManager: should_switch(turns, tools)
         ModeManager-->>AdaptiveAgent: True
@@ -76,12 +86,13 @@ flowchart TD
     Reset --> Forward
 ```
 
-1.  **Trigger**: The conversation exceeds `max_turns_before_switch` (currently set to 2 for testing, default 10).
-2.  **Meta-Analysis**: The `ModeManager` sends the conversation summary and list of *all* available tools to the LLM.
-3.  **Reconfiguration**: The LLM returns:
+1.  **Trigger**: The conversation context exceeds the token threshold (default 50% of model context window) OR the agent explicitly calls `switch_mode`.
+2.  **Tool Discovery**: The agent has a built-in tool `list_available_tools` that dynamically queries the MCP server to find out what capabilities are available. This is often the first step before switching modes.
+3.  **Meta-Analysis**: The `ModeManager` sends the conversation summary and list of *all* available tools to the LLM.
+4.  **Reconfiguration**: The LLM returns:
     - A focused System Prompt (e.g., "You are now focused on debugging the database connection...").
     - A list of *only* the tools needed for this specific goal.
-4.  **Rebuild**: The `AdaptiveAgent` destroys the old internal agent and creates a *new* `LlmAgent` instance with this new configuration.
+5.  **Rebuild**: The `AdaptiveAgent` destroys the old internal agent and creates a *new* `LlmAgent` instance with this new configuration.
 
 ## Tool Visibility & Context
 
@@ -89,7 +100,7 @@ flowchart TD
 When a switch occurs, the `tools` list passed to the underlying model is **physically replaced**.
 
 - **Before Switch**: The model sees ALL tools (e.g., `[read_file, write_file, deep_think, planner, ...]`).
-- **After Switch**: The model sees ONLY the selected tools (e.g., `[read_file, write_file]`).
+- **After Switch**: The model sees ONLY the selected tools (e.g., `[read_file, write_file]`) PLUS the always-available built-in tools (`switch_mode`, `list_available_tools`).
 
 **Verification**: If you ask the agent "What tools do you have?" *after* a switch, it should only list the subset. If it lists tools it doesn't have, it is hallucinating based on its *internal* training knowledge or residual context (see below).
 
@@ -117,7 +128,7 @@ To truly verify that the tools are restricted:
 Thresholds are defined in `agent/dak_agent/mode_manager.py`:
 
 ```python
-self.max_turns_before_switch = 10  # Default
+self.token_threshold = 0.5  # 50% threshold
 ```
 
 ## Future Improvements

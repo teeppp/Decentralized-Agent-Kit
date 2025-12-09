@@ -62,6 +62,10 @@ Available Tools:
 - other tools: As defined in your plan.
 
 You CANNOT just write text. You MUST call a tool.
+
+If you are missing tools to fulfill the request:
+1. Call `switch_mode(request_tool_list=True)` to find available tools.
+2. Then call `switch_mode` again to switch.
 """
         return _create_enforcement_error(error_message)
 

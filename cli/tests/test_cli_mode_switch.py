@@ -41,7 +41,7 @@ def main():
     test_messages = [
         "Hello, can you help me?",
         "What tools do you have?",
-        "Tell me about your capabilities",  # This should trigger mode switch (threshold=2)
+        "Please switch mode to 'Research' because I want to research.",
         "Are you still working?",
     ]
     
@@ -70,11 +70,22 @@ def main():
             
             if response.status_code == 200:
                 print(f"[Message {i}] Agent: OK (status 200)")
+                try:
+                    resp_json = response.json()
+                    # Extract text from response if possible
+                    # Structure: {"content": {"parts": [{"text": "..."}]}}
+                    if "content" in resp_json and "parts" in resp_json["content"]:
+                        for part in resp_json["content"]["parts"]:
+                            if "text" in part:
+                                print(f"Agent Response: {part['text']}")
+                            if "function_call" in part:
+                                print(f"Agent Tool Call: {part['function_call']['name']}")
+                except:
+                    print(f"Agent Response (raw): {response.text[:200]}")
             else:
                 print(f"[Message {i}] ERROR: HTTP {response.status_code}")
                 print(f"Response: {response.text[:200]}")
                 return False
-                
         except Exception as e:
             print(f"[Message {i}] EXCEPTION: {e}")
             return False

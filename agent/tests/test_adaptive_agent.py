@@ -3,6 +3,9 @@ from unittest.mock import MagicMock, patch
 from dak_agent.adaptive_agent import AdaptiveAgent
 from dak_agent.mode_manager import ModeManager
 from google.adk.agents import LlmAgent
+from google.adk.agents.callback_context import CallbackContext
+from google.adk.models.llm_response import LlmResponse
+from google.adk.tools import FunctionTool
 from google.genai import types
 
 class TestAdaptiveAgent:
@@ -17,13 +20,24 @@ class TestAdaptiveAgent:
 
     @patch("dak_agent.adaptive_agent.genai.Client")
     def test_initialization(self, mock_genai_client, mock_tools):
+        """Test that the agent initializes with correct tools."""
+        # Add switch_mode to mock tools to simulate real usage
+        mock_switch = MagicMock(spec=FunctionTool)
+        mock_switch.name = "switch_mode"
+        tools = mock_tools + [mock_switch]
+        
         agent = AdaptiveAgent(
             model="test-model",
             name="test_agent",
             instruction="Initial instruction",
-            tools=mock_tools
+            tools=tools
         )
         
+        tool_names = [t.name for t in agent.tools if hasattr(t, 'name')]
+        assert "switch_mode" in tool_names
+        assert "list_available_tools" in tool_names
+        assert "tool1" in tool_names
+        assert "tool2" in tool_names
         assert agent.model == "test-model"
         assert agent.name == "test_agent"
         assert isinstance(agent._mode_manager, ModeManager)
@@ -31,8 +45,9 @@ class TestAdaptiveAgent:
 
     @patch("dak_agent.adaptive_agent.genai.Client")
     @patch("dak_agent.mode_manager.ModeManager.generate_mode_config")
-    def test_initial_turn_trigger(self, mock_generate_config, mock_genai_client, mock_tools):
-        """Test that the first turn always triggers a mode switch."""
+    @pytest.mark.asyncio
+    async def test_initial_turn_trigger(self, mock_generate_config, mock_genai_client, mock_tools):
+        """Test that the first turn does NOT trigger a mode switch (starts with minimal tools)."""
         agent = AdaptiveAgent(
             model="test-model",
             name="test_agent",
@@ -46,22 +61,21 @@ class TestAdaptiveAgent:
         # Simulate callback (first turn)
         context = MagicMock()
         context.session.contents = []
-        agent._wrapped_callback(llm_response=MagicMock(), callback_context=context)
+        await agent._wrapped_callback(llm_response=MagicMock(), callback_context=context)
         
-        # Verify Switch happened
-        assert agent.instruction.startswith("New Instruction")
-        # In the new implementation, we keep all original tools + potentially add guidance
-        # So the tool count should be at least the original count
-        assert len(agent.tools) >= len(mock_tools)
+        # Verify Switch DID NOT happen
+        assert agent.instruction == "Initial instruction"
         
-        # Verify generate_mode_config called with client
-        mock_generate_config.assert_called_once()
-        args, kwargs = mock_generate_config.call_args
-        assert args[2] == agent._meta_agent_client
+        # Verify generate_mode_config NOT called
+        mock_generate_config.assert_not_called()
+        
+        # Verify _is_first_turn is set to False
+        assert agent._mode_manager._is_first_turn is False
 
     @patch("dak_agent.adaptive_agent.genai.Client")
     @patch("dak_agent.mode_manager.ModeManager.generate_mode_config")
-    def test_token_threshold_trigger(self, mock_generate_config, mock_genai_client, mock_tools):
+    @pytest.mark.asyncio
+    async def test_token_threshold_trigger(self, mock_generate_config, mock_genai_client, mock_tools):
         """Test that exceeding token threshold triggers a switch."""
         agent = AdaptiveAgent(
             model="test-model",
@@ -91,7 +105,7 @@ class TestAdaptiveAgent:
         mock_content.parts = [mock_part]
         context.session.contents = [mock_content]
         
-        agent._wrapped_callback(llm_response=MagicMock(), callback_context=context)
+        await agent._wrapped_callback(llm_response=MagicMock(), callback_context=context)
         
         # Verify Switch happened
         assert agent.instruction == "New Instruction"
@@ -99,7 +113,8 @@ class TestAdaptiveAgent:
 
     @patch("dak_agent.adaptive_agent.genai.Client")
     @patch("dak_agent.mode_manager.ModeManager.generate_mode_config")
-    def test_switch_mode_tool_trigger(self, mock_generate_config, mock_genai_client, mock_tools):
+    @pytest.mark.asyncio
+    async def test_switch_mode_tool_trigger(self, mock_generate_config, mock_genai_client, mock_tools):
         """Test that LLM calling switch_mode triggers a switch."""
         agent = AdaptiveAgent(
             model="test-model",
@@ -107,6 +122,7 @@ class TestAdaptiveAgent:
             instruction="Initial instruction",
             tools=mock_tools
         )
+        
         
         # Bypass initial turn trigger
         agent._mode_manager._is_first_turn = False
@@ -125,8 +141,10 @@ class TestAdaptiveAgent:
         context = MagicMock()
         context.session.contents = []
         
-        agent._wrapped_callback(llm_response=llm_response, callback_context=context)
+        await agent._wrapped_callback(llm_response=llm_response, callback_context=context)
         
         # Verify Switch happened
         assert agent.instruction == "New Instruction"
         mock_generate_config.assert_called_once()
+
+

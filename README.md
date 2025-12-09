@@ -10,6 +10,8 @@ An intelligent agent framework with LLM integration, Model Context Protocol (MCP
 - **Web UI**: Next.js-based chat interface with OAuth authentication
 - **CLI Tool**: Command-line interface for direct agent interaction
 - **Persistent State**: Conversation history with PostgreSQL
+- **Enforcer Mode**: Strict ReAct pattern with "Ulysses Pact" for reliability
+- **Observability**: OpenTelemetry tracing with LangFuse integration
 
 ## Quick Start with Docker
 
@@ -69,6 +71,7 @@ docker compose up --build -d
 - **[MCP Integration Guide](docs/guides/mcp_integration.md)** - Tool development and usage
 - [CLI Usage Guide](docs/guides/cli_usage.md)
 - [Authentication Testing](docs/guides/authentication_testing.md)
+- [Enforcer Mode Guide](docs/enforcer_mode.md)
 
 ### Architecture
 - [System Overview](docs/architecture/overview.md)
@@ -132,6 +135,14 @@ Key environment variables (see `.env.example` for full list):
 GOOGLE_API_KEY=your_google_api_key
 OPENAI_API_KEY=your_openai_key  # optional
 ANTHROPIC_API_KEY=your_anthropic_key  # optional
+
+# Enforcer Mode
+ENABLE_ENFORCER_MODE=true  # Enable strict ReAct pattern
+
+# LangFuse Monitoring (Optional)
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com
 
 # LLM Configuration
 LLM_PROVIDER=gemini  # or 'openai', 'anthropic'
