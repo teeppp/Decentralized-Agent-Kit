@@ -76,7 +76,7 @@ flowchart TD
     Reset --> Forward
 ```
 
-1.  **Trigger**: The conversation exceeds `max_turns_before_switch` (currently set to 2 for testing, default 10).
+1.  **Trigger**: The conversation context exceeds the token threshold (default 50% of model context window) OR the agent explicitly calls `switch_mode`.
 2.  **Meta-Analysis**: The `ModeManager` sends the conversation summary and list of *all* available tools to the LLM.
 3.  **Reconfiguration**: The LLM returns:
     - A focused System Prompt (e.g., "You are now focused on debugging the database connection...").
@@ -117,7 +117,7 @@ To truly verify that the tools are restricted:
 Thresholds are defined in `agent/dak_agent/mode_manager.py`:
 
 ```python
-self.max_turns_before_switch = 10  # Default
+self.token_threshold = 0.5  # 50% threshold
 ```
 
 ## Future Improvements

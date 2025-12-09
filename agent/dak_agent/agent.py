@@ -44,7 +44,7 @@ class PatchedMcpToolset(McpToolset):
 # Create MCP toolset
 mcp_toolset = PatchedMcpToolset(
     connection_params=StreamableHTTPConnectionParams(url=mcp_url),
-    require_confirmation=True
+    require_confirmation=False
 )
 
 from google.adk.tools import FunctionTool
@@ -118,17 +118,22 @@ def planner(task_description: str, plan_steps: list[str], allowed_tools: list[st
     
     return f"Plan recorded for '{task_description}':\n{plan_str}{restriction_msg}"
 
-def switch_mode(reason: str, new_focus: str) -> str:
+def switch_mode(reason: str = "", new_focus: str = "", request_tool_list: bool = False) -> str:
     """
-    Request a mode switch when you feel the conversation has shifted
-    or the context is becoming too heavy.
+    Request a mode switch or query available tools.
     
     Args:
-        reason: Why you want to switch modes (e.g., "Context is heavy", "New phase started")
-        new_focus: What the new mode should focus on
+        reason: Why you want to switch modes (e.g., "Need to use File System tools").
+        new_focus: What the new mode should focus on (e.g., "File Operations").
+        request_tool_list: Set to True to see a list of ALL available tools in the system.
     
-    This tool triggers the Mode Manager to create a new, focused configuration.
+    Workflow:
+    1. If you don't know what tools are available, call `switch_mode(request_tool_list=True)`.
+    2. Review the tool list returned by the system.
+    3. Call `switch_mode(reason="...", new_focus="...")` to switch to a mode that includes the desired tools.
     """
+    if request_tool_list:
+        return "Requesting tool list..."
     return f"Mode switch requested: {reason}. New focus: {new_focus}"
 
 # Create FunctionTool instances
@@ -178,7 +183,7 @@ You have the ability to bind yourself to a specific plan using the `planner` too
 
 You can ONLY output text AFTER calling `ask_question` or `attempt_answer`. Otherwise you MUST call a tool.'''
     # Add Enforcer-specific tools only in Enforcer Mode
-    root_agent_tools.extend([system_retry_tool, attempt_answer_tool, ask_question_tool])
+    root_agent_tools.extend([attempt_answer_tool, ask_question_tool])
 
 from .adaptive_agent import AdaptiveAgent
 
@@ -189,5 +194,6 @@ root_agent = AdaptiveAgent(
     name='dak_agent',
     instruction=instruction,
     tools=root_agent_tools,
-    after_model_callback=after_model_callback
+    after_model_callback=after_model_callback,
+    mcp_url=mcp_url
 )

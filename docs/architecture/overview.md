@@ -22,17 +22,21 @@ A command-line interface for developers and power users.
 - **Direct Access**: Interact with the Agent API from the terminal.
 - **Automation**: Scriptable commands for agent tasks.
 
-## Data Flow
-
-1.  **User Interaction**: User sends a prompt via UI or CLI.
-2.  **Authentication**: Request is authenticated (JWT or API Headers).
-3.  **Agent Processing**:
-    - Agent receives the request.
-    - Retrieves conversation history from State Manager.
-    - Constructs a prompt with context.
-    - Calls the LLM.
-4.  **Response**: Agent receives LLM response, updates history, and returns the result to the user.
-
+```mermaid
+graph LR
+    User[User] -->|Interacts| UI["Web UI (Next.js)"]
+    User -->|Commands| CLI[CLI Tool]
+    
+    UI -->|API Requests| Agent["DAK Agent (Python)"]
+    CLI -->|API Requests| Agent
+    
+    subgraph Backend Services
+        Agent -->|Tools & Resources| MCP[MCP Server]
+        Agent -->|Persists State| DB[(PostgreSQL)]
+    end
+    
+    MCP -->|Executes| Tools["Tools (deep_think, etc.)"]
+```
 ## Infrastructure
 
 - **Docker Compose**: Orchestrates all services (Agent, UI, Database).

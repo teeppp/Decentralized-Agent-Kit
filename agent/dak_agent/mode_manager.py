@@ -48,9 +48,9 @@ class ModeManager:
         """
         # Trigger 1: Initial request
         if self._is_first_turn:
-            logger.info("Mode Switch Triggered: Initial request (first turn)")
+            logger.info("First turn: Using default minimal toolset (no mode switch).")
             self._is_first_turn = False
-            return True
+            return False
         
         # Trigger 2: Token threshold exceeded
         if context_token_count > 0:
@@ -116,7 +116,7 @@ class ModeManager:
         
         meta_prompt = f"""
 You are a "Meta-Agent" responsible for optimizing another AI agent's performance.
-The current agent has been running for a while and its context is getting full.
+The current agent is transitioning to a new phase of its task.
 You need to create a NEW, focused configuration for this agent to continue the task efficiently.
 
 # Current Context / Goal
@@ -129,9 +129,16 @@ You need to create a NEW, focused configuration for this agent to continue the t
 1. Analyze the current situation. What is the immediate next step?
 2. Write a CONCISE System Instruction for the agent to focus ONLY on this next step.
    - The instruction should be specific, not generic.
-   - It should summarize the relevant past context so the agent knows what happened.
+   - It MUST summarize the relevant past context so the agent knows what happened, as the previous history will be cleared.
+   - Do NOT mention "context is full" or "switching modes". Just describe the role and the current objective.
+   - **CRITICAL**: Append this standard instruction at the end:
+     "If the user requests an action that requires tools you do not currently have, you MUST follow this 2-step process:
+      1. Call `switch_mode(request_tool_list=True)` to see ALL available tools.
+      2. Review the list and call `switch_mode(reason='...', new_focus='...')` to switch to the correct mode.
+      Do NOT guess tool names. Do NOT try to call tools that are not in your list."
 3. Select ONLY the strictly necessary tools from the list above.
    - Fewer tools = better focus.
+   - ALWAYS include `switch_mode` so the agent can switch again later.
 
 # Output Format
 You must output a JSON object with this structure:

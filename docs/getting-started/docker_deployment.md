@@ -142,6 +142,10 @@ docker compose logs ui -f
 | `LLM_PROVIDER` | No | `gemini` | LLM provider (`gemini`, `openai`, `anthropic`) |
 | `DATABASE_URL` | No | Auto-configured | PostgreSQL connection string |
 | `MCP_SERVER_URL` | No | `http://mcp-server:8000/mcp` | MCP Server URL |
+| `ENABLE_ENFORCER_MODE` | No | `false` | Enable strict ReAct pattern |
+| `LANGFUSE_PUBLIC_KEY` | No | - | LangFuse Public Key |
+| `LANGFUSE_SECRET_KEY` | No | - | LangFuse Secret Key |
+| `LANGFUSE_HOST` | No | `https://cloud.langfuse.com` | LangFuse Host |
 
 *At least one LLM provider API key is required
 
@@ -324,7 +328,7 @@ services:
 ```
 
 **External Database**:
-Replace FerretDB/PostgreSQL with managed MongoDB service.
+Replace PostgreSQL with a managed PostgreSQL service (e.g., AWS RDS, Google Cloud SQL).
 
 ### Monitoring
 
