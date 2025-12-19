@@ -4,7 +4,7 @@ An intelligent agent framework with LLM integration, Model Context Protocol (MCP
 
 ## Features
 
-- **Multi-LLM Support**: Gemini, OpenAI, Anthropic
+- **Multi-LLM Support**: Gemini, OpenAI, Anthropic, Local LLM (Ollama)
 - **MCP Protocol**: Dynamic tool discovery and execution via Model Context Protocol
 - **A2A Protocol**: Agent-to-Agent communication for collaborative workflows
 - **Web UI**: Next.js-based chat interface with OAuth authentication
@@ -145,8 +145,11 @@ LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_HOST=https://cloud.langfuse.com
 
 # LLM Configuration
-LLM_PROVIDER=gemini  # or 'openai', 'anthropic'
-GEMINI_MODEL=gemini-3-pro-preview
+MODEL_NAME=gemini-2.5-flash  # or 'gpt-4o', 'claude-3-opus', 'local-model'
+
+# Local LLM (Ollama)
+LOCAL_LLM_BASE_URL=http://ollama:11434/v1
+LOCAL_LLM_API_KEY=ollama
 
 # NextAuth (for UI)
 NEXTAUTH_SECRET=your_secret_here

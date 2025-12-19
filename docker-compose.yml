@@ -13,6 +13,12 @@ services:
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-dev-secret-change-in-production}
       - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
       - MCP_SERVER_URL=http://mcp-server:8000/mcp
+      - MODEL_NAME=${MODEL_NAME:-gemini-2.5-flash}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LOCAL_LLM_BASE_URL=http://ollama:11434/v1
+      - LOCAL_LLM_API_KEY=ollama
+      - OLLAMA_API_BASE=http://ollama:11434
     depends_on:
       - postgres
     volumes:
@@ -61,5 +67,13 @@ services:
     ports:
       - "5432:5432"
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
 volumes:
   postgres_data:
+  ollama_data:

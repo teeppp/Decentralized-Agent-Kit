@@ -152,7 +152,9 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
         )
         
         # Initialize private attributes
-        self._mode_manager = ModeManager(model_name=model)
+        # Fix: Ensure we pass a string to ModeManager, even if model is a LiteLlm object
+        model_name_str = getattr(model, 'model', str(model)) if not isinstance(model, str) else model
+        self._mode_manager = ModeManager(model_name=model_name_str)
         self._all_available_tools = modified_tools
         self._builtin_tools = builtin_tools
         self._original_callback = after_model_callback

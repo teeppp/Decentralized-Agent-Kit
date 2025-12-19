@@ -183,10 +183,24 @@ You can ONLY output text AFTER calling `ask_question` or `attempt_answer`. Other
 
 from .adaptive_agent import AdaptiveAgent
 
+# Use native LiteLLM support from google.adk
+from google.adk.models.lite_llm import LiteLlm
+
+# Helper to format model name for LiteLLM
+def get_litellm_model_name(model_name: str) -> str:
+    # If it's a Gemini model and doesn't start with gemini/, add it
+    # This forces LiteLLM to use Google AI Studio (API Key) instead of Vertex AI
+    if "gemini" in model_name and not model_name.startswith("gemini/"):
+        return f"gemini/{model_name}"
+    return model_name
+
+model_name = os.getenv("MODEL_NAME", os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
+formatted_model_name = get_litellm_model_name(model_name)
+
 # Define the root agent
 # We wrap the standard LlmAgent with our AdaptiveAgent to enable dynamic mode switching
 root_agent = AdaptiveAgent(
-    model=os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"),
+    model=LiteLlm(model=formatted_model_name),
     name='dak_agent',
     instruction=instruction,
     tools=root_agent_tools,
