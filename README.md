@@ -60,6 +60,17 @@ docker compose up --build -d
 - **`cli/`**: Command-line tool for agent interaction
 - **`docs/`**: Comprehensive documentation
 
+#### 3. **HTMX-based BFF UI (New)**
+A lightweight, Python-based UI using the **BFF (Backend For Frontend)** pattern.
+- **URL**: http://localhost:8002
+- **Tech Stack**: FastAPI, htmx, Jinja2
+- **Docs**: [BFF Architecture](docs/bff_architecture.md)
+
+To run the BFF service:
+```bash
+docker compose up -d --build bff
+```
+
 ## Documentation
 
 ### Getting Started
