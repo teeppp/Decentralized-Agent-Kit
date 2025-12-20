@@ -56,6 +56,15 @@ services:
     depends_on:
       - agent
 
+  bff:
+    build: ./bff
+    ports:
+      - "8002:8000"
+    environment:
+      - AGENT_URL=http://agent:8000
+    depends_on:
+      - agent
+
   postgres:
     image: postgres:15-alpine
     environment:
