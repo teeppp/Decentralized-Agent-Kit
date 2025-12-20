@@ -72,6 +72,8 @@ docker compose up --build -d
 - [CLI Usage Guide](docs/guides/cli_usage.md)
 - [Authentication Testing](docs/guides/authentication_testing.md)
 - [Enforcer Mode Guide](docs/enforcer_mode.md)
+- [Agent Skills Guide](docs/agent_skills.md): Learn how to extend the agent with new capabilities.
+- [Built-in Tools Reference](docs/built_in_tools.md): Documentation for core tools like `list_skills` and `switch_mode`.
 
 ### Architecture
 - [System Overview](docs/architecture/overview.md)

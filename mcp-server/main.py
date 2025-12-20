@@ -107,6 +107,8 @@ async def search_files(pattern: str, path: str = ".") -> str:
 
 
 
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: Starlette):
     # Switch to the projects directory to ensure tools operate on the user's workspace

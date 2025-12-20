@@ -82,20 +82,22 @@ class ModeManager:
         self, 
         history_summary: str, 
         available_tools: List[Any],
+        available_skills: List[dict],
         model_client: Any,
         requested_focus: Optional[str] = None
-    ) -> Tuple[str, List[Any]]:
+    ) -> Tuple[str, List[Any], List[str]]:
         """
-        Generates a new mode configuration (Instruction, Tools) using a Meta-LLM call.
+        Generates a new mode configuration (Instruction, Tools, Skills) using a Meta-LLM call.
         
         Args:
             history_summary: A summary of the conversation so far.
             available_tools: The full list of tools available to the agent.
+            available_skills: The list of available skills (metadata).
             model_client: The LLM client to use for the Meta-Agent call.
             requested_focus: If LLM requested a specific focus via switch_mode.
             
         Returns:
-            Tuple[str, List[Any]]: (New System Instruction, List of Selected Tools)
+            Tuple[str, List[Any], List[str]]: (New System Instruction, List of Selected Tools, List of Selected Skills)
         """
         
         # Prepare Tool Descriptions for the Meta-Agent
@@ -108,6 +110,15 @@ class ModeManager:
             tool_map[name] = tool
 
         tools_block = "\n".join(tool_descriptions)
+
+        # Prepare Skill Descriptions
+        skill_descriptions = []
+        for skill in available_skills:
+            name = skill.get("name", "unknown")
+            description = skill.get("description", "No description")
+            skill_descriptions.append(f"- {name}: {description}")
+        
+        skills_block = "\n".join(skill_descriptions) if skill_descriptions else "No skills available."
 
         # Construct the Meta-Prompt
         focus_hint = ""
@@ -125,6 +136,10 @@ You need to create a NEW, focused configuration for this agent to continue the t
 # Available Tools
 {tools_block}
 
+# Available Skills
+Skills are modular capabilities that provide specialized instructions and best practices.
+{skills_block}
+
 # Your Task
 1. Analyze the current situation. What is the immediate next step?
 2. Write a CONCISE System Instruction for the agent to focus ONLY on this next step.
@@ -133,18 +148,22 @@ You need to create a NEW, focused configuration for this agent to continue the t
    - Do NOT mention "context is full" or "switching modes". Just describe the role and the current objective.
    - **CRITICAL**: Append this standard instruction at the end:
      "If the user requests an action that requires tools you do not currently have, you MUST follow this 2-step process:
-      1. Call `switch_mode(request_tool_list=True)` to see ALL available tools.
+      1. Call `switch_mode(request_tool_list=True)` to see ALL available tools and skills.
       2. Review the list and call `switch_mode(reason='...', new_focus='...')` to switch to the correct mode.
       Do NOT guess tool names. Do NOT try to call tools that are not in your list."
 3. Select ONLY the strictly necessary tools from the list above.
    - Fewer tools = better focus.
    - ALWAYS include `switch_mode` so the agent can switch again later.
+4. Select relevant Skills from the list above.
+   - Skills provide specialized instructions (e.g., "git-automation" gives rules for git usage).
+   - Select a skill if the task involves that domain.
 
 # Output Format
 You must output a JSON object with this structure:
 {{
   "instruction": "The new system prompt...",
-  "selected_tools": ["tool_name_1", "tool_name_2"]
+  "selected_tools": ["tool_name_1", "tool_name_2"],
+  "selected_skills": ["skill_name_1"]
 }}
 """
 
@@ -165,7 +184,7 @@ You must output a JSON object with this structure:
             
             if not response.text:
                 logger.warning("Meta-Agent returned empty response. Keeping current configuration.")
-                return "Continue with current task.", []
+                return "Continue with current task.", [], []
 
             # Parse JSON response
             import json
@@ -173,14 +192,15 @@ You must output a JSON object with this structure:
             
             new_instruction = config_data.get("instruction", "Continue with current task.")
             selected_tool_names = config_data.get("selected_tools", [])
+            selected_skills = config_data.get("selected_skills", [])
             
             logger.info(f"Meta-Agent selected tools: {selected_tool_names}")
+            logger.info(f"Meta-Agent selected skills: {selected_skills}")
             
-            # Return instruction and list of selected tool names
-            # AdaptiveAgent will use these names to create a filtered McpToolset
-            return new_instruction, selected_tool_names
+            # Return instruction, list of selected tool names, and selected skills
+            return new_instruction, selected_tool_names, selected_skills
 
         except Exception as e:
             logger.error(f"Meta-Agent failed: {e}. Reverting to default configuration.")
             # Fallback: Return generic instruction and empty list (will use all tools)
-            return "Continue with current task.", []
+            return "Continue with current task.", [], []
