@@ -1,12 +1,12 @@
 import logging
 import os
-from typing import List, Any, Optional, Callable
+from typing import List, Any, Optional, Callable, Dict
 from google.adk.agents import LlmAgent
 from google.adk.models.llm_response import LlmResponse
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
 from google.adk.tools.base_toolset import BaseToolset
-from pydantic import PrivateAttr, ConfigDict
+from pydantic import PrivateAttr, ConfigDict, Field
 from .mode_manager import ModeManager
 from google import genai
 import inspect
@@ -27,6 +27,15 @@ class AdaptiveAgent(LlmAgent):
     """
     model_config = ConfigDict(arbitrary_types_allowed=True)
     
+from .skill_registry import SkillRegistry
+import subprocess
+
+class AdaptiveAgent(LlmAgent):
+    """
+    A wrapper around LlmAgent that implements Dynamic Mode Switching and Agent Skills.
+    """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
     # Override tools field to allow ProxyMcpToolset
     tools: List[Any] = []
 
@@ -38,6 +47,9 @@ class AdaptiveAgent(LlmAgent):
     _disable_mode_switching: bool = PrivateAttr(default=False)
     _mcp_url: str = PrivateAttr(default="")
     _meta_agent_client: Optional[genai.Client] = PrivateAttr(default=None)
+    skill_registry: Optional[SkillRegistry] = Field(default=None, exclude=True)
+    available_remote_tools: Dict[str, str] = Field(default_factory=dict, exclude=True)
+    _active_skills: List[str] = PrivateAttr(default=[])
     
     def __init__(
         self, 
@@ -49,6 +61,107 @@ class AdaptiveAgent(LlmAgent):
         disable_mode_switching: bool = False,
         mcp_url: Optional[str] = None
     ):
+        # Define Client-Side Tools
+        
+        async def list_skills() -> str:
+            """
+            List all available Agent Skills and Remote Tools.
+            Returns a list of skills and tools with their names and descriptions.
+            """
+            # Ensure remote tools are loaded
+            await self._ensure_remote_tools_loaded()
+            
+            output = []
+            
+            # 1. Local Skills
+            if self.skill_registry:
+                skills = self.skill_registry.list_skills()
+                if skills:
+                    output.append("## Curated Skills (Recommended)")
+                    output.extend([f"- {s['name']}: {s['description']}" for s in skills])
+            
+            # 2. Remote Tools (Zero-Config)
+            if self.available_remote_tools:
+                output.append("\n## Individual Remote Tools")
+                output.extend([f"- {name}: {desc}" for name, desc in self.available_remote_tools.items()])
+            
+            if not output:
+                return "No skills or tools available."
+            
+            return "\n".join(output)
+
+        async def enable_skill(skill_name: str) -> str:
+            """
+            Enable a specific skill OR an individual remote tool.
+            This loads the instructions and makes the tools available.
+            """
+            # Ensure remote tools are loaded
+            await self._ensure_remote_tools_loaded()
+            
+            # Check if it's a curated skill
+            skill = self.skill_registry.get_skill(skill_name) if self.skill_registry else None
+            
+            tools_to_add = []
+            instructions_to_add = ""
+            
+            if skill:
+                # It's a curated skill
+                if skill_name in self._active_skills:
+                    return f"Skill '{skill_name}' is already active."
+                self._active_skills.append(skill_name)
+                
+                if 'instructions' in skill:
+                    instructions_to_add = f"\n\n# Skill: {skill_name}\n{skill['instructions']}"
+                
+                tools_to_add = skill.get('tools', [])
+                
+            elif skill_name in self.available_remote_tools:
+                # It's a raw remote tool (Zero-Config)
+                if skill_name in self._active_skills:
+                    return f"Tool '{skill_name}' is already active."
+                self._active_skills.append(skill_name)
+                
+                # No specific instructions for raw tools, but we can add a generic one
+                instructions_to_add = f"\n\n# Tool Enabled: {skill_name}\nYou have enabled the raw tool '{skill_name}'. Use it according to its schema."
+                
+                tools_to_add = [skill_name]
+            else:
+                return f"Error: Skill or Tool '{skill_name}' not found."
+
+            # Apply Instructions
+            if instructions_to_add:
+                self.instruction += instructions_to_add
+            
+            # Apply Tools
+            required_tools = set(tools_to_add)
+            
+            current_tool_names = set()
+            for t in self.tools:
+                name = getattr(t, 'name', None)
+                if name:
+                    current_tool_names.add(name)
+            
+            tools_to_add_from_mcp = []
+            for tool_name in required_tools:
+                if tool_name not in current_tool_names:
+                    tools_to_add_from_mcp.append(tool_name)
+            
+            if tools_to_add_from_mcp:
+                if self._mcp_url:
+                    try:
+                        filtered_toolset = McpToolset(
+                            connection_params=StreamableHTTPConnectionParams(url=self._mcp_url),
+                            tool_filter=tools_to_add_from_mcp,
+                            require_confirmation=False
+                        )
+                        self.tools.append(filtered_toolset)
+                        logger.info(f"Added filtered McpToolset for tools: {tools_to_add_from_mcp}")
+                    except Exception as e:
+                        logger.error(f"Failed to create McpToolset for {skill_name}: {e}")
+                        return f"Error enabling {skill_name}: Failed to connect to tools. {e}"
+            
+            return f"'{skill_name}' enabled."
+
 
 
         # Override switch_mode tool to have access to tools list
@@ -58,63 +171,27 @@ class AdaptiveAgent(LlmAgent):
         def switch_mode(reason: str = "", new_focus: str = "") -> str:
             """
             Request a mode switch.
-            
-            Args:
-                reason: Why you want to switch modes (e.g., "Need to use File System tools").
-                new_focus: What the new mode should focus on (e.g., "File Operations").
-            
-            Workflow:
-            1. If you don't know what tools are available, call `list_available_tools` first.
-            2. Call `switch_mode(reason="...", new_focus="...")` to switch to a mode that includes the desired tools.
             """
             return f"Mode switch requested: {reason}. New focus: {new_focus}"
 
         # Create the overridden switch_mode tool
-        # We need to find the existing switch_mode tool and replace it, or just add this one.
-        # The 'tools' list passed in contains the original switch_mode tool.
-        # We should replace it.
-        
         modified_tools = []
         for tool in tools:
             if getattr(tool, 'name', '') == 'switch_mode':
-                # Replace with our custom tool
                 modified_tools.append(FunctionTool(switch_mode, require_confirmation=False))
             else:
                 modified_tools.append(tool)
         
-        # Add the local list_available_tools to modified_tools (which becomes builtin_tools)
-        # We use the instance method
-        modified_tools.append(FunctionTool(self.list_available_tools, require_confirmation=False))
+        # Add Client-Side Tools
+        modified_tools.append(FunctionTool(list_skills, require_confirmation=False))
+        modified_tools.append(FunctionTool(enable_skill, require_confirmation=False))
         
-        # Define a callback to gracefully handle tool errors (e.g., tool not found)
+        # Define a callback to gracefully handle tool errors
         def on_tool_error_handler(tool, args: dict, tool_context, error: Exception) -> Optional[dict]:
-            """
-            Handle tool execution errors gracefully.
-            Returns an error message to the LLM instead of crashing.
-            
-            Args:
-                tool: The BaseTool that failed (or None if not found)
-                args: The arguments passed to the tool
-                tool_context: The ToolContext for this execution
-                error: The exception that was raised
-            
-            Returns:
-                Optional dict with error response, or None to re-raise
-            """
             tool_name = getattr(tool, 'name', str(tool)) if tool else "unknown"
             error_msg = str(error)
             logger.warning(f"Tool error caught: {tool_name} - {error_msg}")
-            
-            if "not found" in error_msg.lower():
-                return {"error": f"""Tool '{tool_name}' is not available in the current mode.
-
-Available actions:
-1. Call `list_available_tools` (always available) to see ALL tools.
-2. Then call `switch_mode(new_focus='...')` to switch to a mode with the required tools.
-
-Do NOT guess tool names. Use only tools that are explicitly available."""}
-            else:
-                return {"error": f"Tool '{tool_name}' failed: {error_msg}"}
+            return {"error": f"Tool '{tool_name}' failed: {error_msg}"}
         
         # Prepare local variables for initial toolset calculation
         builtin_tools = []
@@ -128,18 +205,9 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
                 original_mcp_toolset = tool
 
         # Determine initial tools
-        # If mode switching is enabled, start with minimal tools (Built-in + list_available_tools)
-        # list_available_tools is now part of builtin_tools
-        
-        # Default initial tools
-        initial_tools = modified_tools
-
-        if not disable_mode_switching and original_mcp_toolset:
-            logger.info("Initializing with minimal toolset (Built-in only)")
-            # We only include builtin_tools (which now includes the local list_available_tools).
-            # We do NOT include original_mcp_toolset initially.
-            
-            initial_tools = builtin_tools
+        # Start with ONLY Built-in tools (Skills + Switch Mode). Hide MCP tools.
+        initial_tools = builtin_tools
+        logger.info("Initializing with minimal toolset (Client-Side Skills + Built-in)")
 
         # Initialize the parent LlmAgent with initial tools
         super().__init__(
@@ -151,8 +219,18 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
             on_tool_error_callback=on_tool_error_handler
         )
         
+        # Initialize SkillRegistry AFTER super().__init__
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        skills_dir = os.path.join(project_root, "agent", "skills")
+        self.skill_registry = SkillRegistry(skills_dir)
+        self.skill_registry.load_skills()
+        self._active_skills = []
+        
+        # Zero-Config: Fetch available remote tools (metadata only)
+        self.available_remote_tools = {} # name -> description
+        # We cannot fetch them synchronously here. They will be lazy-loaded.
+        
         # Initialize private attributes
-        # Fix: Ensure we pass a string to ModeManager, even if model is a LiteLlm object
         model_name_str = getattr(model, 'model', str(model)) if not isinstance(model, str) else model
         self._mode_manager = ModeManager(model_name=model_name_str)
         self._all_available_tools = modified_tools
@@ -163,6 +241,33 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
         # Store MCP URL
         self._mcp_url = mcp_url or os.getenv("MCP_SERVER_URL", "http://mcp-server:8000/mcp")
         logger.info(f"AdaptiveAgent initialized with MCP URL: {self._mcp_url}")
+
+    async def _ensure_remote_tools_loaded(self):
+        """Lazy load remote tools if not already loaded."""
+        if self.available_remote_tools:
+            return
+
+        target_mcp_url = self._mcp_url
+        if not target_mcp_url:
+            return
+
+        try:
+            logger.info(f"Connecting to MCP server at: {target_mcp_url}")
+            temp_toolset = McpToolset(
+                connection_params=StreamableHTTPConnectionParams(url=target_mcp_url),
+                require_confirmation=False
+            )
+            # Fetch tools asynchronously
+            tools = await temp_toolset.get_tools()
+            
+            for tool in tools:
+                name = getattr(tool, 'name', None)
+                desc = getattr(tool, 'description', "No description")
+                if name:
+                    self.available_remote_tools[name] = desc
+            logger.info(f"Discovered {len(self.available_remote_tools)} remote tools.")
+        except Exception as e:
+            logger.warning(f"Failed to discover remote tools: {e}")
         
         # Initialize LLM client for Meta-Agent
         try:
@@ -171,46 +276,7 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
             logger.warning(f"Failed to initialize GenAI client for Meta-Agent: {e}")
             self._meta_agent_client = None
 
-    async def list_available_tools(self) -> str:
-        """
-        List all available tools from the configured MCP server(s).
-        Use this to discover what tools are available before requesting a mode switch.
-        """
-        mcp_url = self._mcp_url
-        if not mcp_url:
-            return "No MCP server URL configured. Cannot list remote tools."
-        
-        try:
-            logger.info(f"Connecting to MCP server at: {mcp_url}")
-            # Create a temporary toolset to fetch tools
-            # We use a short timeout or default settings
-            temp_toolset = McpToolset(
-                connection_params=StreamableHTTPConnectionParams(url=mcp_url),
-                require_confirmation=False
-            )
-            
-            # Fetch tools
-            logger.info("Fetching tools from MCP server...")
-            tools = await temp_toolset.get_tools()
-            logger.info(f"Fetched {len(tools)} tools.")
-            
-            tool_list = []
-            for tool in tools:
-                name = getattr(tool, 'name', 'unknown')
-                description = getattr(tool, 'description', 'No description')
-                tool_list.append(f"- {name}: {description}")
-            
-            if not tool_list:
-                logger.warning("No tools found on MCP server.")
-                return "No tools found on the MCP server."
-                
-            result = "AVAILABLE MCP TOOLS:\n" + "\n".join(tool_list)
-            logger.info(f"Returning tool list: {result[:100]}...") # Log first 100 chars
-            return result
-            
-        except Exception as e:
-            logger.error(f"Failed to list available tools: {e}", exc_info=True)
-            return f"Error listing tools from MCP server: {e}"
+
 
 
     async def _wrapped_callback(self, llm_response: LlmResponse, callback_context: CallbackContext) -> Optional[LlmResponse]:
@@ -367,6 +433,7 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
                         mcp_tools = await tool.get_tools()
                         expanded_available_tools.extend(mcp_tools)
                         logger.info(f"Fetched {len(mcp_tools)} tools from MCP server.")
+                        
                     except Exception as e:
                         logger.error(f"Failed to fetch tools from McpToolset: {e}")
                         # Fallback: add the toolset itself (better than nothing)
@@ -374,19 +441,54 @@ Do NOT guess tool names. Use only tools that are explicitly available."""}
                 else:
                     expanded_available_tools.append(tool)
             
+            # Fetch Available Skills (Client-Side)
+            available_skills = []
+            if self.skill_registry:
+                try:
+                    logger.info("Fetching available skills from registry...")
+                    available_skills = self.skill_registry.list_skills()
+                    logger.info(f"Fetched {len(available_skills)} skills.")
+                except Exception as e:
+                    logger.error(f"Failed to list skills from registry: {e}")
+            
+            # Add Zero-Config Tools as "Skills" for Meta-Agent consideration
+            if self.available_remote_tools:
+                for name, desc in self.available_remote_tools.items():
+                    available_skills.append({
+                        "name": name,
+                        "description": f"[Remote Tool] {desc}"
+                    })
+
             # Get new instruction and selected tool names from Meta-Agent
-            new_instruction, selected_tool_names = self._mode_manager.generate_mode_config(
+            new_instruction, selected_tool_names, selected_skills = self._mode_manager.generate_mode_config(
                 history_summary, 
                 expanded_available_tools,
+                available_skills,
                 self._meta_agent_client,
                 requested_focus
             )
             
-            # CRITICAL FIX: list_available_tools is already in self._builtin_tools.
-            # If Meta-Agent selects it, we must remove it from selected_tool_names to avoid creating a duplicate in the new McpToolset.
-            if "list_available_tools" in selected_tool_names:
-                selected_tool_names.remove("list_available_tools")
-                logger.info("Removed list_available_tools from selected tools (already built-in).")
+            # Load Selected Skills Instructions
+            if selected_skills:
+                logger.info(f"Loading instructions for skills: {selected_skills}")
+                skill_instructions = []
+                for skill_name in selected_skills:
+                    try:
+                        # Check local registry first
+                        skill = self.skill_registry.get_skill(skill_name) if self.skill_registry else None
+                        if skill and 'instructions' in skill:
+                            skill_instructions.append(f"\n\n# Skill: {skill_name}\n{skill['instructions']}")
+                        elif skill_name in self.available_remote_tools:
+                            # Zero-Config Tool
+                            skill_instructions.append(f"\n\n# Tool Enabled: {skill_name}\nYou have enabled the raw tool '{skill_name}'. Use it according to its schema.")
+                        else:
+                            logger.warning(f"Skill '{skill_name}' selected but not found.")
+                    except Exception as e:
+                        logger.error(f"Failed to load skill '{skill_name}': {e}")
+                
+                if skill_instructions:
+                    new_instruction += "".join(skill_instructions)
+                    logger.info("Appended skill instructions to system prompt.")
             
             # Build new tool list
             new_tools = list(self._builtin_tools)  # Always include built-in tools (planner, switch_mode, etc.)
