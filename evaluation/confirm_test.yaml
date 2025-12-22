@@ -1,0 +1,9 @@
+- id: confirm_test_01
+  tags: ["confirm"]
+  description: "Check confirmation request"
+  turns:
+    - role: user
+      content: "ask_questionツールを使って、私の好きな色を聞いてください。"
+    - expected:
+        type: tool_call
+        tool_name: "ask_question"

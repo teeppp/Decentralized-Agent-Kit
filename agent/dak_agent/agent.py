@@ -44,7 +44,7 @@ class PatchedMcpToolset(McpToolset):
 # Create MCP toolset
 mcp_toolset = PatchedMcpToolset(
     connection_params=StreamableHTTPConnectionParams(url=mcp_url),
-    require_confirmation=False
+    require_confirmation=True
 )
 
 from google.adk.tools import FunctionTool
@@ -133,11 +133,11 @@ def switch_mode(reason: str = "", new_focus: str = "") -> str:
     return f"Mode switch requested: {reason}. New focus: {new_focus}"
 
 # Create FunctionTool instances
-system_retry_tool = FunctionTool(system_retry, require_confirmation=False)
-attempt_answer_tool = FunctionTool(attempt_answer, require_confirmation=False)
-ask_question_tool = FunctionTool(ask_question, require_confirmation=False)
-planner_tool = FunctionTool(planner, require_confirmation=False)
-switch_mode_tool = FunctionTool(switch_mode, require_confirmation=False)
+system_retry_tool = FunctionTool(system_retry, require_confirmation=False) # Retry should be automatic
+attempt_answer_tool = FunctionTool(attempt_answer, require_confirmation=True)
+ask_question_tool = FunctionTool(ask_question, require_confirmation=True)
+planner_tool = FunctionTool(planner, require_confirmation=True)
+switch_mode_tool = FunctionTool(switch_mode, require_confirmation=True)
 
 # Define the root agent
 after_model_callback = None
