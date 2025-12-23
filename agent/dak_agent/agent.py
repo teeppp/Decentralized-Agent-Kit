@@ -6,6 +6,22 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# Monkey-patch ClientSession to fix Pydantic schema generation error
+try:
+    from mcp.client.session import ClientSession
+    from pydantic import GetCoreSchemaHandler
+    from pydantic_core import CoreSchema, core_schema
+
+    def _get_pydantic_core_schema(cls, source_type, handler: GetCoreSchemaHandler) -> CoreSchema:
+        return core_schema.is_instance_schema(source_type)
+
+    ClientSession.__get_pydantic_core_schema__ = classmethod(_get_pydantic_core_schema)
+    logger.info("Monkey-patched ClientSession for Pydantic compatibility.")
+except ImportError:
+    logger.warning("Could not monkey-patch ClientSession (mcp not installed?)")
+except Exception as e:
+    logger.warning(f"Failed to monkey-patch ClientSession: {e}")
+
 # Langfuse OpenTelemetry Instrumentation
 try:
     logger.warning("[Langfuse] Initializing instrumentation...")

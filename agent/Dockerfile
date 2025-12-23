@@ -5,6 +5,12 @@ WORKDIR /app
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
@@ -13,6 +19,7 @@ RUN uv sync --no-install-project
 
 # Copy agent definition
 COPY dak_agent ./dak_agent
+COPY skills ./skills
 COPY README.md .
 
 # Install project

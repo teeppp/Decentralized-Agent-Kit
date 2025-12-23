@@ -13,6 +13,16 @@ An intelligent agent framework with LLM integration, Model Context Protocol (MCP
 - **Enforcer Mode**: Strict ReAct pattern with "Ulysses Pact" for reliability
 - **Observability**: OpenTelemetry tracing with LangFuse integration
 
+### Experimental Features
+- **Symbol Blockchain Integration**: Give the agent a wallet and "survival instinct" to manage its own funds. See [Symbol Integration](docs/experimental/symbol_integration.md).
+- **MCP Protocol**: Dynamic tool discovery and execution via Model Context Protocol
+- **A2A Protocol**: Agent-to-Agent communication for collaborative workflows
+- **Web UI**: Next.js-based chat interface with OAuth authentication
+- **CLI Tool**: Command-line interface for direct agent interaction
+- **Persistent State**: Conversation history with PostgreSQL
+- **Enforcer Mode**: Strict ReAct pattern with "Ulysses Pact" for reliability
+- **Observability**: OpenTelemetry tracing with LangFuse integration
+
 ## Quick Start with Docker
 
 ```bash

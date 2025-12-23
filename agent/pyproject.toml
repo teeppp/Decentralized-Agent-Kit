@@ -23,6 +23,7 @@ dependencies = [
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp>=1.27.0",
     "litellm>=1.0.0",
+    "symbol-sdk-python>=3.0.3",
 ]
 
 [build-system]

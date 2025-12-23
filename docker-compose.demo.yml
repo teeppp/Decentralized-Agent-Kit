@@ -1,0 +1,71 @@
+services:
+  # 1. Consumer Agent (Buyer)
+  agent-consumer:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - SYMBOL_USE_MOCK=true
+      - SYMBOL_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000000
+      - AGENT_NAME=ConsumerAgent
+      - AGENT_INSTRUCTION="You are a Consumer Agent. You want to buy premium services. You have a wallet. If asked to pay, use your wallet."
+      - MCP_SERVER_URL=http://mcp-server:8000/mcp
+    depends_on:
+      - mcp-server
+    ports:
+      - "8001:8000"
+
+  # 2. Provider Agent (Seller)
+  agent-provider:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - SYMBOL_USE_MOCK=true
+      - SYMBOL_PRIVATE_KEY=1111111111111111111111111111111111111111111111111111111111111111
+      - AGENT_NAME=ProviderAgent
+      - AGENT_INSTRUCTION="You are a Provider Agent. You sell premium analysis. Use 'premium_service' skill."
+      - MCP_SERVER_URL=http://mcp-server:8000/mcp
+    depends_on:
+      - mcp-server
+    ports:
+      - "8002:8000"
+
+  # Shared MCP Server (for basic tools)
+  mcp-server:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    ports:
+      - "8000:8000"
+
+  # Database
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: username
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U username -d postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # UI (Consumer Agent Interface)
+  bff:
+    build:
+      context: ./bff
+      dockerfile: Dockerfile
+    ports:
+      - "3000:8000"
+    environment:
+      - AGENT_URL=http://agent-consumer:8000
+    depends_on:
+      - agent-consumer
