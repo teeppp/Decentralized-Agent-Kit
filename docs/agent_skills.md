@@ -46,9 +46,6 @@ graph TD
     *   **Tools**: List of MCP tool names required for this skill.
     *   **Instructions**: Markdown text explaining how to use the skill and its tools.
 
-3.  **Local Scripts (`agent/scripts/`)**:
-    *   Python scripts that can be executed via the generic `run_script` tool.
-    *   Allows adding simple local capabilities without building full MCP tools.
 
 ## Workflow
 
@@ -97,12 +94,6 @@ instructions: |
   - Always check `git_status` before committing.
   - Write clear, conventional commit messages.
 ```
-
-### 2. (Optional) Add Local Scripts
-If your skill needs local processing power, add a script to `agent/scripts/`.
-
-*   Create `agent/scripts/my_script.py`.
-*   The Agent can run it using `run_script("my_script.py", ["arg1"])`.
 
 ### 3. Verify
 Restart the agent and ask: "What skills do you have?". Your new skill should appear.
