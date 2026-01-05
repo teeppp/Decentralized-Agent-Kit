@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 from google.adk.tools import FunctionTool
 
 from .skill_registry import SkillRegistry
-from .wallet_manager import WalletManager
-from skills.symbol_wallet.paid_tool import PaymentRequiredError
+from .wallets.solana_wallet import get_solana_wallet_manager
+from .handlers.payment_handler import PaymentHandler
+from .errors import PaymentRequiredError
 import subprocess
 
 class AdaptiveAgent(LlmAgent):
@@ -41,7 +42,8 @@ class AdaptiveAgent(LlmAgent):
     skill_registry: Optional[SkillRegistry] = Field(default=None, exclude=True)
     available_remote_tools: Dict[str, str] = Field(default_factory=dict, exclude=True)
     _active_skills: List[str] = PrivateAttr(default=[])
-    _wallet_manager: Optional[WalletManager] = PrivateAttr(default=None)
+    _payment_handler: Optional[PaymentHandler] = PrivateAttr(default=None)
+    _enable_ap2: bool = PrivateAttr(default=False)  # Feature flag for AP2 Protocol
     
     def __init__(
         self, 
@@ -49,6 +51,7 @@ class AdaptiveAgent(LlmAgent):
         name: str,
         instruction: str,
         tools: List[Any],
+        sub_agents: Optional[List[Any]] = None,
         after_model_callback: Optional[Any] = None,
         disable_mode_switching: bool = False,
         mcp_url: Optional[str] = None
@@ -106,14 +109,6 @@ class AdaptiveAgent(LlmAgent):
                     instructions_to_add = f"\n\n# Skill: {skill_name}\n{skill['instructions']}"
                 
                 tools_to_add = skill.get('tools', [])
-                
-                # Special handling for Symbol Wallet
-                if skill_name == 'symbol_wallet':
-                    if not self._wallet_manager:
-                        self._wallet_manager = WalletManager()
-                    # Inject initial status immediately
-                    balance = self._wallet_manager.get_balance()
-                    instructions_to_add += f"\n[SYSTEM STATUS] Current Funds: {balance} XYM. Survival Mode ACTIVE."
                 
             elif skill_name in self.available_remote_tools:
                 # It's a raw remote tool (Zero-Config)
@@ -205,24 +200,32 @@ class AdaptiveAgent(LlmAgent):
                         logger.error(f"Failed to create McpToolset for {skill_name}: {e}")
                         return f"Error enabling {skill_name}: Failed to connect to tools. {e}"
             
-            # Auto-enable wallet tools for paid service skills
+            # Auto-enable wallet tools for paid service skills (only if AP2 is enabled)
             # This ensures the LLM can always check balance, even after context control
-            if skill_name != 'symbol_wallet' and 'symbol_wallet' not in self._active_skills:
-                wallet_skill_dir = os.path.join(self.skill_registry.skills_dir, "symbol_wallet")
-                wallet_tools_file = os.path.join(wallet_skill_dir, "tools.py")
-                
-                if os.path.exists(wallet_tools_file):
-                    try:
-                        import importlib.util
-                        import sys
+            # Note: self._enable_ap2 is not yet set during __init__, so we check env directly here
+            ap2_enabled = os.getenv("ENABLE_AP2_PROTOCOL", "false").lower() == "true"
+            if ap2_enabled and skill_name != 'solana_wallet' and 'solana_wallet' not in self._active_skills:
+                # Load Solana wallet tools for AP2 (SOL payments)
+                try:
+                    import importlib.util
+                    import sys
+                    
+                    solana_wallet_tools_file = os.path.join(
+                        os.path.dirname(__file__), "..", "skills", "solana_wallet", "tools.py"
+                    )
+                    if os.path.exists(solana_wallet_tools_file):
+                        if "skills.solana_wallet.tools" in sys.modules:
+                            wallet_module = sys.modules["skills.solana_wallet.tools"]
+                            logger.info("Using existing skills.solana_wallet.tools module")
+                        else:
+                            spec = importlib.util.spec_from_file_location("skills.solana_wallet.tools", solana_wallet_tools_file)
+                            wallet_module = importlib.util.module_from_spec(spec)
+                            sys.modules["skills.solana_wallet.tools"] = wallet_module
+                            spec.loader.exec_module(wallet_module)
+                            logger.info("Loaded new skills.solana_wallet.tools module")
                         
-                        spec = importlib.util.spec_from_file_location("skills.symbol_wallet.tools", wallet_tools_file)
-                        wallet_module = importlib.util.module_from_spec(spec)
-                        sys.modules["skills.symbol_wallet.tools"] = wallet_module
-                        spec.loader.exec_module(wallet_module)
-                        
-                        # Add wallet info tools (non-transaction tools are safe to auto-add)
-                        wallet_info_tools = ['check_my_balance', 'get_my_address']
+                        # Add Solana wallet info tools for AP2
+                        wallet_info_tools = ['check_solana_balance', 'get_solana_address', 'send_sol_payment']
                         for wt_name in wallet_info_tools:
                             if hasattr(wallet_module, wt_name):
                                 func = getattr(wallet_module, wt_name)
@@ -231,15 +234,12 @@ class AdaptiveAgent(LlmAgent):
                                     existing_tool_names = {getattr(t, 'name', None) for t in self.tools}
                                     if wt_name not in existing_tool_names:
                                         self.tools.append(FunctionTool(func, require_confirmation=False))
-                                        logger.info(f"Auto-added wallet tool '{wt_name}' for AP2 support")
+                                        logger.info(f"Auto-added Solana wallet tool '{wt_name}' for AP2 support")
+                    else:
+                        logger.warning(f"Solana wallet tools not found at {solana_wallet_tools_file}")
                         
-                        # Initialize wallet manager if not already
-                        if not self._wallet_manager:
-                            self._wallet_manager = WalletManager()
-                            logger.info("WalletManager initialized for auto-added wallet tools")
-                            
-                    except Exception as e:
-                        logger.warning(f"Could not auto-add wallet tools: {e}")
+                except Exception as e:
+                    logger.warning(f"Could not auto-add Solana wallet tools: {e}")
             
             return f"'{skill_name}' enabled."
 
@@ -286,14 +286,19 @@ class AdaptiveAgent(LlmAgent):
         logger.info("Initializing with minimal toolset (Client-Side Skills + Built-in)")
 
         # Initialize the parent LlmAgent with initial tools
-        super().__init__(
-            model=model,
-            name=name,
-            instruction=instruction,
-            tools=initial_tools,
-            after_model_callback=self._wrapped_callback,
-            on_tool_error_callback=self._on_tool_error
-        )
+        init_kwargs = {
+            "model": model,
+            "name": name,
+            "instruction": instruction,
+            "tools": initial_tools,
+            "after_model_callback": self._wrapped_callback,
+            "on_tool_error_callback": self._on_tool_error
+        }
+        if sub_agents:
+            init_kwargs["sub_agents"] = sub_agents
+            logger.info(f"Initializing with {len(sub_agents)} A2A sub-agent(s)")
+        
+        super().__init__(**init_kwargs)
         
         # Initialize SkillRegistry AFTER super().__init__
         # Initialize SkillRegistry AFTER super().__init__
@@ -319,49 +324,47 @@ class AdaptiveAgent(LlmAgent):
         
         # Store MCP URL
         self._mcp_url = mcp_url or os.getenv("MCP_SERVER_URL", "http://mcp-server:8000/mcp")
+        
+        # AP2 Protocol Feature Flag (Experimental)
+        self._enable_ap2 = os.getenv("ENABLE_AP2_PROTOCOL", "false").lower() == "true"
+        if self._enable_ap2:
+            logger.info("AP2 Protocol ENABLED via ENABLE_AP2_PROTOCOL=true")
+            # Initialize PaymentHandler
+            try:
+                wallet_manager = get_solana_wallet_manager()
+                self._payment_handler = PaymentHandler(wallet_manager)
+                logger.info("PaymentHandler initialized with SolanaWalletManager")
+            except Exception as e:
+                logger.warning(f"Failed to initialize PaymentHandler: {e}")
+                self._payment_handler = None
+        else:
+            logger.info("AP2 Protocol DISABLED (set ENABLE_AP2_PROTOCOL=true to enable)")
+        
+        # Initialize LLM client for Meta-Agent
+        try:
+            self._meta_agent_client = genai.Client()
+        except Exception as e:
+            logger.warning(f"Failed to initialize GenAI client for Meta-Agent: {e}")
+            self._meta_agent_client = None
+
         logger.info(f"AdaptiveAgent initialized with MCP URL: {self._mcp_url}")
 
     def _on_tool_error(self, tool, args: dict, tool_context, error: Exception) -> Optional[dict]:
         """
-        Callback to gracefully handle tool errors and Auto-Payment (AP2 Protocol).
+        Callback to gracefully handle tool errors.
+        
+        AP2 Protocol: When a payment is required, we inform the LLM about:
+        - The payment details (amount, recipient, currency)
+        
+        The LLM must decide whether to pay based on user consent or Intent Mandate.
+        We do NOT auto-pay to prevent unauthorized transactions.
         """
         tool_name = getattr(tool, 'name', str(tool)) if tool else "unknown"
         
-        # AP2 Protocol: Auto-Payment Logic
-        if isinstance(error, PaymentRequiredError):
-            logger.info(f"AP2: Payment Required for {tool_name}: {error.price} XYM")
-            
-            # Ensure wallet is available for auto-payment
-            # This enables AP2 even if symbol_wallet skill wasn't explicitly enabled
-            if not self._wallet_manager:
-                try:
-                    self._wallet_manager = WalletManager()
-                    logger.info("AP2: WalletManager initialized on-demand for auto-payment")
-                except Exception as e:
-                    logger.error(f"AP2: Failed to initialize WalletManager: {e}")
-                    return {"error": f"Payment Required: {error.price} XYM to {error.address}. Please enable 'symbol_wallet' skill or provide 'payment_hash'."}
-            
-            try:
-                logger.info(f"AP2: Initiating Auto-Payment of {error.price} XYM to {error.address}")
-                # Execute Payment
-                tx_hash = self._wallet_manager.send_transaction(error.address, error.price, error.message)
-                
-                if "failed" in tx_hash.lower() or "error" in tx_hash.lower():
-                    return {"error": f"AP2 Auto-Payment Failed: {tx_hash}"}
-                
-                logger.info(f"AP2: Payment Sent. TxHash: {tx_hash}. Retrying tool...")
-                
-                # Get remaining balance for context
-                remaining_balance = self._wallet_manager.get_balance()
-                
-                # Return instruction for LLM to retry with payment_hash, including balance info
-                return {
-                    "error": f"Payment Required. I have automatically paid {error.price} XYM. TxHash: {tx_hash}. Remaining balance: {remaining_balance} XYM. Please RETRY the tool call immediately with argument `payment_hash='{tx_hash}'`."
-                }
-                
-            except Exception as e:
-                logger.error(f"AP2 Auto-Payment Failed: {e}")
-                return {"error": f"AP2 Auto-Payment Failed: {e}"}
+        # AP2 Protocol: Payment Required - Inform LLM for decision
+        if self._enable_ap2 and isinstance(error, PaymentRequiredError) and self._payment_handler:
+            logger.info(f"AP2: Payment Required for {tool_name}: {error.price} (currency: SOL)")
+            return self._payment_handler.format_payment_error(tool_name, error)
 
         error_msg = str(error)
         logger.warning(f"Tool error caught: {tool_name} - {error_msg}")
@@ -395,9 +398,12 @@ class AdaptiveAgent(LlmAgent):
             logger.warning(f"Failed to discover remote tools: {e}")
         
         # Initialize LLM client for Meta-Agent
+        print(f"DEBUG: About to init GenAI Client. genai: {genai}")
         try:
             self._meta_agent_client = genai.Client()
+            print("DEBUG: GenAI Client initialized successfully.")
         except Exception as e:
+            print(f"DEBUG: Failed to initialize GenAI client: {e}")
             logger.warning(f"Failed to initialize GenAI client for Meta-Agent: {e}")
             self._meta_agent_client = None
 
@@ -445,28 +451,6 @@ class AdaptiveAgent(LlmAgent):
                 logger.info("Performing mode switch")
                 await self._perform_mode_switch(callback_context)
             
-            # 5. Inject Wallet Status if Symbol Wallet is active
-            if 'symbol_wallet' in self._active_skills and self._wallet_manager:
-                try:
-                    balance = self._wallet_manager.get_balance()
-                    # We need to inject this into the NEXT turn's system instruction or context.
-                    # Since we can't easily modify the *current* response, we'll append it to the history 
-                    # or rely on the system instruction update in `enable_skill` and `_perform_mode_switch`.
-                    # However, to keep it "live", we should update the instruction if possible.
-                    
-                    # For now, let's log it. In a real scenario, we might want to inject a "System Message" 
-                    # into the chat history, but `google-adk` might not support that easily.
-                    # A better approach is to append it to the `instruction` property so it's picked up next time.
-                    
-                    status_msg = f"\n[SYSTEM STATUS] Current Funds: {balance} XYM."
-                    if status_msg not in self.instruction:
-                         # Simple append to instruction (careful about duplication)
-                         # We'll rely on the initial injection in enable_skill for now, 
-                         # or we can implement a dynamic instruction updater.
-                         pass
-                except Exception as e:
-                    logger.warning(f"Failed to fetch wallet balance: {e}")
-
             logger.info("Exiting _wrapped_callback")
             return None
         except Exception as e:
@@ -713,25 +697,3 @@ class AdaptiveAgent(LlmAgent):
             # Do not re-raise to prevent agent crash
 
         logger.info("Mode Switch Complete.")
-    
-    def _extract_history_summary(self, context: CallbackContext) -> str:
-        """Extract a summary of the conversation history."""
-        try:
-            if hasattr(context, 'session') and context.session:
-                contents = []
-                if hasattr(context.session, 'contents'):
-                    contents = context.session.contents or []
-                elif hasattr(context.session, 'history'):
-                    contents = context.session.history or []
-                
-                # Get the last few messages as summary
-                messages = []
-                for content in contents[-5:]:  # Last 5 messages
-                    if hasattr(content, 'parts'):
-                        for part in content.parts:
-                            if hasattr(part, 'text') and part.text:
-                                messages.append(part.text[:100])  # Truncate
-                return " | ".join(messages)
-        except Exception as e:
-            logger.warning(f"Could not extract history: {e}")
-        return "Conversation in progress."

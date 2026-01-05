@@ -24,6 +24,10 @@ dependencies = [
     "opentelemetry-exporter-otlp>=1.27.0",
     "litellm>=1.0.0",
     "symbol-sdk-python>=3.0.3",
+    # Solana + AP2/x402 support
+    "solana>=0.34.0",
+    "solders>=0.21.0",
+    "a2a-sdk>=0.2.0",
 ]
 
 [build-system]

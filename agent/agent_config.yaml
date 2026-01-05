@@ -4,6 +4,6 @@ mcp_servers:
     type: "http"
 
 a2a_peers:
-  - name: "agent-provider"
+  - name: "agent_provider"
     url: "http://agent-provider:8000"
     capabilities: ["premium_service"]

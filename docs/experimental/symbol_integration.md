@@ -93,9 +93,13 @@ When any skill is enabled, wallet info tools (`check_my_balance`, `get_my_addres
 
 ### Configuration
 
-Add your Symbol Private Key to the `.env` file:
+Add the following environment variables to your `.env` file:
 
 ```bash
+# AP2 Protocol (required to enable the feature)
+ENABLE_AP2_PROTOCOL=true
+
+# Symbol Wallet Configuration
 SYMBOL_PRIVATE_KEY=your_private_key_here
 SYMBOL_NODE_URL=http://sym-test-01.opening-line.jp:3000  # Optional
 SYMBOL_USE_MOCK=true  # For testing without real transactions
@@ -103,6 +107,9 @@ SYMBOL_USE_MOCK=true  # For testing without real transactions
 
 > [!WARNING]
 > **Security Notice**: Never commit your private key to version control.
+
+> [!IMPORTANT]
+> **Feature Flag**: AP2 Protocol is **disabled by default**. You must explicitly set `ENABLE_AP2_PROTOCOL=true` to enable auto-payment and wallet integration features.
 
 ---
 
