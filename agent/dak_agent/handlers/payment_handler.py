@@ -1,6 +1,5 @@
 import logging
 from typing import Dict, Optional, Any
-from ..wallets.base_wallet import BaseWalletManager
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +10,8 @@ class PaymentHandler:
     that allows the LLM to make an autonomous decision.
     """
 
-    def __init__(self, wallet_manager: Optional[BaseWalletManager] = None):
-        self.wallet_manager = wallet_manager
+    def __init__(self):
+        pass
 
     def format_payment_error(self, tool_name: str, error: Any) -> Dict[str, str]:
         """
@@ -50,7 +49,9 @@ If you wish to proceed, you must:
 3. Retry the original tool call with the `payment_hash` argument returned by the payment tool.
 
 **Decision**:
-Do not pay if you do not have a valid reason or user authorization.
+You CANNOT pay this yourself. You must request payment from the user (or calling agent).
+Return the following message EXACTLY to the user:
+"Payment Required: {price} {currency} to {address}. Reason: {reason}"
 """
         logger.info(f"Formatted payment request for {tool_name}: {price} {currency}")
         return {"error": payment_info}

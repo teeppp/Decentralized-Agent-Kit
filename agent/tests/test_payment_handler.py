@@ -11,8 +11,7 @@ from dak_agent.errors import PaymentRequiredError
 
 class TestPaymentHandler(unittest.TestCase):
     def setUp(self):
-        self.wallet_mock = MagicMock()
-        self.handler = PaymentHandler(wallet_manager=self.wallet_mock)
+        self.handler = PaymentHandler()
 
     def test_format_payment_error(self):
         # Create a mock PaymentRequiredError

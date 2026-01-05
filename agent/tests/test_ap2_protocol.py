@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from dak_agent.adaptive_agent import AdaptiveAgent
-from skills.symbol_wallet.paid_tool import PaymentRequiredError
+from dak_agent.errors import PaymentRequiredError
 
 class TestAp2Protocol:
     @pytest.fixture
@@ -9,27 +9,26 @@ class TestAp2Protocol:
         # Mock dependencies to avoid full initialization
         with patch('dak_agent.adaptive_agent.ModeManager'), \
              patch('dak_agent.adaptive_agent.SkillRegistry'), \
-             patch('dak_agent.adaptive_agent.WalletManager'), \
+             patch('dak_agent.adaptive_agent.get_solana_wallet_manager'), \
              patch('dak_agent.adaptive_agent.McpToolset'):
             
             agent = AdaptiveAgent(model="test-model", name="test_agent", instruction="test-instruction", tools=[])
             # Manually set private attributes that would be set in __init__
             agent._enable_ap2 = True
             agent.tools = []
+            
+            # Initialize PaymentHandler mock
+            agent._payment_handler = MagicMock()
+            agent._payment_handler.format_payment_error.return_value = {
+                "error": "**Payment Required**\nAmount**: 10.0\nRecipient**: TestAddress\nCurrent Wallet Status: Mock Balance: 1000.0 SOL"
+            }
+            
             return agent
 
     def test_payment_required_handling(self, agent):
-        """Test that PaymentRequiredError triggers balance check and modifies error message."""
+        """Test that PaymentRequiredError triggers PaymentHandler."""
         # Setup the error
         error = PaymentRequiredError(price=10.0, address="TestAddress", message="Service fee")
-        
-        # Mock a tool that looks like check_solana_balance
-        mock_balance_tool = MagicMock()
-        mock_balance_tool.name = "check_solana_balance"
-        mock_balance_tool.fn.return_value = "Mock Balance: 1000.0 SOL"
-        
-        # Add tool to agent
-        agent.tools = [mock_balance_tool]
         
         # Call _on_tool_error
         result = agent._on_tool_error(tool=MagicMock(), args={}, tool_context=None, error=error)
@@ -38,27 +37,22 @@ class TestAp2Protocol:
         assert "error" in result
         error_msg = result["error"]
         
-        # Check that balance info was injected
-        assert "Current Wallet Status" in error_msg
-        assert "Mock Balance: 1000.0 SOL" in error_msg
-        
-        # Check that payment details are present
+        # Check that payment details are present (as formatted by mock PaymentHandler)
         assert "Amount**: 10.0" in error_msg
         assert "Recipient**: TestAddress" in error_msg
         
-        # Verify balance tool was called
-        mock_balance_tool.fn.assert_called_once()
+        # Verify PaymentHandler was called
+        agent._payment_handler.format_payment_error.assert_called_once()
 
-    def test_payment_required_no_balance_tool(self, agent):
-        """Test handling when check_solana_balance tool is missing."""
+    def test_payment_required_handler_missing(self, agent):
+        """Test handling when PaymentHandler is missing (AP2 disabled or init failed)."""
         error = PaymentRequiredError(price=10.0, address="TestAddress", message="Payment required")
-        agent.tools = [] # No tools
+        agent._payment_handler = None # Simulate missing handler
         
         result = agent._on_tool_error(tool=MagicMock(), args={}, tool_context=None, error=error)
         
         assert "error" in result
         error_msg = result["error"]
         
-        # Should still have payment info but no balance info
-        assert "Amount**: 10.0" in error_msg
-        assert "Current Wallet Status" not in error_msg
+        # Should fallback to standard error message
+        assert "Tool '<MagicMock name='mock.name' id=" in error_msg or "Tool 'unknown' failed" in error_msg

@@ -22,10 +22,11 @@ AGENT_URL = os.getenv("AGENT_URL", "http://agent:8000")
 async def index(request: Request):
     # Generate a session ID for this page load
     session_id = f"session_bff_{uuid.uuid4()}"
-    return templates.TemplateResponse("index.html", {"request": request, "session_id": session_id})
+    user_id = f"user_{session_id}"
+    return templates.TemplateResponse("index.html", {"request": request, "session_id": session_id, "user_id": user_id})
 
 @app.post("/chat")
-async def chat(request: Request, prompt: str = Form(...), session_id: str = Form(...)):
+async def chat(request: Request, prompt: str = Form(...), session_id: str = Form(...), user_id: str = Form(...)):
     
     async def event_generator():
         # 1. Send user message to UI immediately
@@ -37,8 +38,8 @@ async def chat(request: Request, prompt: str = Form(...), session_id: str = Form
         # 2.5. Ensure Session Exists
         # Use a local variable for the session ID to use in calls, initialized from the argument
         current_session_id = session_id
-        # Use a unique user ID per session to ensure fresh state (wallet, memory)
-        current_user_id = f"user_{current_session_id}"
+        # Use the provided user ID
+        current_user_id = user_id
         
         session_url = f"{AGENT_URL}/apps/dak_agent/users/{current_user_id}/sessions/{current_session_id}"
         headers = {
@@ -64,6 +65,12 @@ async def chat(request: Request, prompt: str = Form(...), session_id: str = Form
             except Exception as e:
                 yield f'<div class="chat-message error">Session Error: {str(e)}</div>\n'
                 return
+
+        # 2.6. Update Client Session ID if changed
+        if current_session_id != session_id:
+            logger.info(f"Updating client session ID to: {current_session_id}")
+            # Use HTMX OOB swap to update the hidden input field
+            yield f'<input type="hidden" id="session-id-input" name="session_id" value="{current_session_id}" hx-swap-oob="true">\n'
 
         # 3. Call ADK Agent
         url = f"{AGENT_URL}/run"

@@ -15,7 +15,7 @@ services:
       - SOLANA_NETWORK=devnet
       - AGENT_NAME=dak_agent
       - AGENT_PUBLIC_URL=http://agent-consumer:8000/a2a/dak_agent
-      - 'AGENT_INSTRUCTION=You are a Consumer Agent. Payment Policy: If you receive a PaymentRequired error, you MUST call check_solana_balance(). You DO NOT KNOW your balance until you check it. NEVER assume you have 0 SOL. If you have enough funds (mock balance is 1000 SOL), use send_sol_payment to pay. AFTER paying, retry the request. Do not ask for permission.'
+      - 'AGENT_INSTRUCTION=You are a Consumer Agent. Payment Policy: If you receive a PaymentRequired error, you MUST call check_solana_balance(). If you have funds, use send_sol_payment to pay. CRITICAL: AFTER paying, you MUST IMMEDIATELY call the "transfer_to_agent_provider" tool again with the "payment_hash" argument. DO NOT STOP to report the payment to the user. CHAIN THE TOOLS: Pay -> Retry -> Report Result. You have permission to proceed without asking.'
       - MCP_SERVER_URL=http://mcp-server:8000/mcp
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}

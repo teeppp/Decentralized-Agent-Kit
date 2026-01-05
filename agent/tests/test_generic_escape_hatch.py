@@ -27,6 +27,7 @@ class TestGenericEscapeHatch(unittest.TestCase):
         self.mode_manager.generate_mode_config(
             history_summary="Test summary",
             available_tools=tools,
+            available_skills=[],
             model_client=mock_client
         )
         

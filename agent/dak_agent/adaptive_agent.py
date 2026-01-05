@@ -331,9 +331,8 @@ class AdaptiveAgent(LlmAgent):
             logger.info("AP2 Protocol ENABLED via ENABLE_AP2_PROTOCOL=true")
             # Initialize PaymentHandler
             try:
-                wallet_manager = get_solana_wallet_manager()
-                self._payment_handler = PaymentHandler(wallet_manager)
-                logger.info("PaymentHandler initialized with SolanaWalletManager")
+                self._payment_handler = PaymentHandler()
+                logger.info("PaymentHandler initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize PaymentHandler: {e}")
                 self._payment_handler = None
@@ -451,6 +450,9 @@ class AdaptiveAgent(LlmAgent):
                 logger.info("Performing mode switch")
                 await self._perform_mode_switch(callback_context)
             
+            logger.info("Exiting _wrapped_callback")
+            return None
+
             logger.info("Exiting _wrapped_callback")
             return None
         except Exception as e:

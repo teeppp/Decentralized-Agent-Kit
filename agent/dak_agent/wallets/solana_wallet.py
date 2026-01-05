@@ -31,8 +31,6 @@ class SolanaWalletManager(BaseWalletManager):
     Supports SOL and wSOL (wrapped SOL) transactions.
     """
     
-    # wSOL Token Mint Address
-    WSOL_MINT = "So11111111111111111111111111111111111111112"
     
     # Network RPC URLs
     DEVNET_RPC = "https://api.devnet.solana.com"
@@ -182,6 +180,10 @@ class SolanaWalletManager(BaseWalletManager):
         Verify a transaction was confirmed and matches expected details.
         """
         if self.use_mock:
+            # In mock mode, we only accept hashes starting with "MockTx"
+            if not tx_hash.startswith("MockTx"):
+                logger.warning(f"[MOCK] Verification failed for invalid hash: {tx_hash}")
+                return False
             logger.info(f"[MOCK] Verified transaction {tx_hash}")
             return True
             

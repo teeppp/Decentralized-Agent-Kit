@@ -10,10 +10,9 @@ from mcp.server.fastmcp import FastMCP
 # but ensure the AdaptiveAgent logic correctly handles it.
 
 @pytest.mark.asyncio
-async def test_list_available_tools_integration():
+async def test_list_skills_integration():
     """
-    Test that list_available_tools correctly fetches tools from a mocked MCP connection.
-    This simulates the full flow within the agent without requiring a running HTTP server.
+    Test that list_skills correctly fetches tools from a mocked MCP connection.
     """
     # Mock the McpToolset to return a specific list of tools
     mock_tool1 = MagicMock()
@@ -45,11 +44,15 @@ async def test_list_available_tools_integration():
             mcp_url="http://mock-mcp:8000"
         )
         
-        # Call list_available_tools
-        result = await agent.list_available_tools()
+        # Find the list_skills tool
+        list_skills_tool = next((t for t in agent.tools if t.name == "list_skills"), None)
+        assert list_skills_tool is not None
+        
+        # Call list_skills
+        result = await list_skills_tool.func()
         
         # Verify result
-        assert "AVAILABLE MCP TOOLS:" in result
+        assert "Individual Remote Tools" in result
         assert "- mock_tool_1: Description for mock tool 1" in result
         assert "- mock_tool_2: Description for mock tool 2" in result
         
@@ -59,7 +62,7 @@ async def test_list_available_tools_integration():
         assert call_args.kwargs['connection_params'].url == "http://mock-mcp:8000"
 
 @pytest.mark.asyncio
-async def test_list_available_tools_empty():
+async def test_list_skills_empty():
     """Test handling of empty tool list."""
     with patch("dak_agent.adaptive_agent.McpToolset") as MockMcpToolset:
         mock_toolset_instance = MockMcpToolset.return_value
@@ -68,32 +71,49 @@ async def test_list_available_tools_empty():
         future.set_result([])
         mock_toolset_instance.get_tools.return_value = future
         
-        agent = AdaptiveAgent(
-            model="test-model",
-            name="test_agent",
-            instruction="instruction",
-            tools=[],
-            mcp_url="http://mock-mcp:8000"
-        )
-        
-        result = await agent.list_available_tools()
-        assert "No tools found on the MCP server" in result
+        # Patch SkillRegistry in adaptive_agent module
+        with patch("dak_agent.adaptive_agent.SkillRegistry") as MockRegistry:
+            MockRegistry.return_value.list_skills.return_value = []
+            
+            agent = AdaptiveAgent(
+                model="test-model",
+                name="test_agent",
+                instruction="instruction",
+                tools=[],
+                mcp_url="http://mock-mcp:8000"
+            )
+            
+            # Find the list_skills tool
+            list_skills_tool = next((t for t in agent.tools if t.name == "list_skills"), None)
+            assert list_skills_tool is not None
+            
+            result = await list_skills_tool.func()
+            assert "No skills or tools available." in result
 
 @pytest.mark.asyncio
-async def test_list_available_tools_error():
+async def test_list_skills_error():
     """Test handling of connection error."""
     with patch("dak_agent.adaptive_agent.McpToolset") as MockMcpToolset:
         mock_toolset_instance = MockMcpToolset.return_value
+        # get_tools is called in _ensure_remote_tools_loaded
         mock_toolset_instance.get_tools.side_effect = Exception("Connection refused")
         
-        agent = AdaptiveAgent(
-            model="test-model",
-            name="test_agent",
-            instruction="instruction",
-            tools=[],
-            mcp_url="http://mock-mcp:8000"
-        )
-        
-        result = await agent.list_available_tools()
-        assert "Error listing tools from MCP server" in result
-        assert "Connection refused" in result
+        # Patch SkillRegistry in adaptive_agent module
+        with patch("dak_agent.adaptive_agent.SkillRegistry") as MockRegistry:
+            MockRegistry.return_value.list_skills.return_value = []
+            
+            agent = AdaptiveAgent(
+                model="test-model",
+                name="test_agent",
+                instruction="instruction",
+                tools=[],
+                mcp_url="http://mock-mcp:8000"
+            )
+            
+            # Find the list_skills tool
+            list_skills_tool = next((t for t in agent.tools if t.name == "list_skills"), None)
+            assert list_skills_tool is not None
+            
+            # Should not raise, but log warning and return empty/partial list
+            result = await list_skills_tool.func()
+            assert "No skills or tools available." in result

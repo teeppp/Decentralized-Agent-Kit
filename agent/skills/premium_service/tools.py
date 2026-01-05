@@ -1,5 +1,5 @@
 from typing import Optional
-from skills.symbol_wallet.paid_tool import PaidToolWrapper
+from dak_agent.decorators import PaidToolWrapper
 import logging
 
 logger = logging.getLogger(__name__)

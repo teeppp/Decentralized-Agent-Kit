@@ -5,7 +5,7 @@ Provides tools for agents to check balance and send SOL payments.
 import logging
 import os
 from typing import Optional
-from dak_agent.solana_wallet_manager import get_solana_wallet_manager, SolanaWalletManager
+from dak_agent.wallets.solana_wallet import get_solana_wallet_manager, SolanaWalletManager
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +16,8 @@ _wallet_manager: Optional[SolanaWalletManager] = None
 def _get_wallet() -> SolanaWalletManager:
     """Get or create the wallet manager singleton."""
     global _wallet_manager
-    # Force re-initialization if mock mode is requested but balance is 0 (likely initialized too early)
-    if _wallet_manager is None or (os.getenv("SOLANA_USE_MOCK", "false").lower() == "true" and _wallet_manager.get_balance() == 0):
+    if _wallet_manager is None:
         _wallet_manager = get_solana_wallet_manager()
-        logger.info(f"Wallet manager created/re-created. Mock mode: {_wallet_manager.use_mock}, Balance: {_wallet_manager.get_balance()}")
     return _wallet_manager
 
 
@@ -79,7 +77,7 @@ def send_sol_payment(recipient: str, amount: float, memo: str = "") -> str:
         return f"Error: Insufficient balance. Current: {balance:.6f} SOL, Required: {amount:.6f} SOL"
     
     # Execute transfer
-    result = wallet.send_sol(recipient, amount, memo)
+    result = wallet.send_transaction(recipient, amount, memo)
     
     if result.startswith("Error"):
         return result
@@ -94,6 +92,11 @@ def send_sol_payment(recipient: str, amount: float, memo: str = "") -> str:
 **Amount**: {amount:.6f} SOL
 **Transaction**: `{result}`
 **Remaining Balance**: {new_balance:.6f} SOL
+
+**NEXT STEP REQUIRED**:
+You have successfully paid. Now you MUST retry the original tool call that required this payment.
+Include the argument `payment_hash="{result}"` in your retry.
+DO NOT STOP HERE. COMPLETE THE ORIGINAL TASK.
 """
 
 

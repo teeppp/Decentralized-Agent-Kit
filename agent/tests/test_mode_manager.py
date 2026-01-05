@@ -23,9 +23,10 @@ class TestModeManager(unittest.TestCase):
         mock_response.text = '{"instruction": "Read file", "selected_tools": ["read_file", "deep_think"]}'
         self.mock_client.models.generate_content.return_value = mock_response
         
-        instruction, selected_tool_names = self.mode_manager.generate_mode_config(
+        instruction, selected_tool_names, selected_skills = self.mode_manager.generate_mode_config(
             history_summary="test",
             available_tools=self.available_tools,
+            available_skills=[],
             model_client=self.mock_client
         )
         
@@ -38,9 +39,10 @@ class TestModeManager(unittest.TestCase):
         """Test that generate_mode_config returns empty list on LLM error."""
         self.mock_client.models.generate_content.side_effect = Exception("API Error")
         
-        instruction, selected_tool_names = self.mode_manager.generate_mode_config(
+        instruction, selected_tool_names, selected_skills = self.mode_manager.generate_mode_config(
             history_summary="test",
             available_tools=self.available_tools,
+            available_skills=[],
             model_client=self.mock_client
         )
         
