@@ -150,7 +150,8 @@
         </div>
 
         <form hx-post="/chat" hx-target="#chat-history" hx-swap="beforeend" hx-on::after-request="this.reset()">
-            <input type="hidden" name="session_id" value="{{ session_id }}">
+            <input type="hidden" id="session-id-input" name="session_id" value="{{ session_id }}">
+            <input type="hidden" name="user_id" value="{{ user_id }}">
             <input type="text" name="prompt" placeholder="Type a message..." required autocomplete="off">
             <button type="submit">Send</button>
         </form>

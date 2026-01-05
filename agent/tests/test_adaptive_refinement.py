@@ -26,7 +26,7 @@ class TestAdaptiveAgentRefinement:
     @pytest.mark.asyncio
     async def test_history_clearing_on_switch(self, mock_generate_config):
         # Setup mock return for generate_mode_config
-        mock_generate_config.return_value = ("New Instruction", ["test_tool"])
+        mock_generate_config.return_value = ("New Instruction", ["test_tool"], [])
         
         # Setup mock context with session history
         mock_context = MagicMock(spec=CallbackContext)
@@ -65,7 +65,7 @@ class TestAdaptiveAgentRefinement:
         mock_context.session.contents = []
         
         with patch.object(self.agent, '_extract_history_summary', return_value="Summary"), \
-             patch('dak_agent.mode_manager.ModeManager.generate_mode_config', return_value=("New", ["other_tool"])):
+             patch('dak_agent.mode_manager.ModeManager.generate_mode_config', return_value=("New", ["other_tool"], [])):
             
             await self.agent._perform_mode_switch(mock_context)
             

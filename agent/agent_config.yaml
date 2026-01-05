@@ -4,7 +4,6 @@ mcp_servers:
     type: "http"
 
 a2a_peers:
-  # Example peer configuration
-  # - name: "peer-agent-1"
-  #   url: "http://peer-agent:8000"
-  #   capabilities: ["chat", "code"]
+  - name: "agent_provider"
+    url: "http://agent-provider:8000"
+    capabilities: ["premium_service"]

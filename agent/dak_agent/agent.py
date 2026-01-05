@@ -6,6 +6,22 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# Monkey-patch ClientSession to fix Pydantic schema generation error
+try:
+    from mcp.client.session import ClientSession
+    from pydantic import GetCoreSchemaHandler
+    from pydantic_core import CoreSchema, core_schema
+
+    def _get_pydantic_core_schema(cls, source_type, handler: GetCoreSchemaHandler) -> CoreSchema:
+        return core_schema.is_instance_schema(source_type)
+
+    ClientSession.__get_pydantic_core_schema__ = classmethod(_get_pydantic_core_schema)
+    logger.info("Monkey-patched ClientSession for Pydantic compatibility.")
+except ImportError:
+    logger.warning("Could not monkey-patch ClientSession (mcp not installed?)")
+except Exception as e:
+    logger.warning(f"Failed to monkey-patch ClientSession: {e}")
+
 # Langfuse OpenTelemetry Instrumentation
 try:
     logger.warning("[Langfuse] Initializing instrumentation...")
@@ -134,14 +150,14 @@ def switch_mode(reason: str = "", new_focus: str = "") -> str:
 
 # Create FunctionTool instances
 system_retry_tool = FunctionTool(system_retry, require_confirmation=False) # Retry should be automatic
-attempt_answer_tool = FunctionTool(attempt_answer, require_confirmation=True)
-ask_question_tool = FunctionTool(ask_question, require_confirmation=True)
+attempt_answer_tool = FunctionTool(attempt_answer, require_confirmation=False)
+ask_question_tool = FunctionTool(ask_question, require_confirmation=False)
 planner_tool = FunctionTool(planner, require_confirmation=True)
 switch_mode_tool = FunctionTool(switch_mode, require_confirmation=True)
 
 # Define the root agent
 after_model_callback = None
-instruction = 'You are a helpful assistant powered by the Decentralized Agent Kit.'
+instruction = os.getenv("AGENT_INSTRUCTION", 'You are a helpful assistant powered by the Decentralized Agent Kit.')
 
 # Built-in control tools that are ALWAYS available (never filtered)
 # These are added separately from mcp_toolset so they survive mode switching
@@ -182,6 +198,26 @@ You can ONLY output text AFTER calling `ask_question` or `attempt_answer`. Other
     root_agent_tools.extend([attempt_answer_tool, ask_question_tool])
 
 from .adaptive_agent import AdaptiveAgent
+from .a2a_peer_manager import get_a2a_sub_agents
+
+# Import Solana tools if AP2 is enabled
+if os.getenv("ENABLE_AP2_PROTOCOL", "false").lower() == "true":
+    try:
+        from skills.solana_wallet.tools import SOLANA_WALLET_TOOLS
+        # Wrap them in FunctionTool if they aren't already (they are raw functions)
+        from google.adk.tools import FunctionTool
+        for tool_func in SOLANA_WALLET_TOOLS:
+            # Check if already wrapped or needs wrapping
+            if not isinstance(tool_func, FunctionTool):
+                # Use function name as tool name
+                root_agent_tools.append(FunctionTool(tool_func))
+            else:
+                root_agent_tools.append(tool_func)
+        logger.info(f"Added {len(SOLANA_WALLET_TOOLS)} Solana wallet tools to root agent")
+    except ImportError:
+        logger.warning("Could not import Solana wallet tools")
+    except Exception as e:
+        logger.warning(f"Failed to add Solana tools: {e}")
 
 # Use native LiteLLM support from google.adk
 from google.adk.models.lite_llm import LiteLlm
@@ -197,6 +233,11 @@ def get_litellm_model_name(model_name: str) -> str:
 model_name = os.getenv("MODEL_NAME", os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash"))
 formatted_model_name = get_litellm_model_name(model_name)
 
+# Load A2A peers from config (like MCP servers)
+a2a_sub_agents = get_a2a_sub_agents()
+if a2a_sub_agents:
+    logger.info(f"Loaded {len(a2a_sub_agents)} A2A peer agent(s)")
+
 # Define the root agent
 # We wrap the standard LlmAgent with our AdaptiveAgent to enable dynamic mode switching
 root_agent = AdaptiveAgent(
@@ -204,6 +245,8 @@ root_agent = AdaptiveAgent(
     name='dak_agent',
     instruction=instruction,
     tools=root_agent_tools,
+    sub_agents=a2a_sub_agents if a2a_sub_agents else None,
     after_model_callback=after_model_callback,
     mcp_url=mcp_url
 )
+

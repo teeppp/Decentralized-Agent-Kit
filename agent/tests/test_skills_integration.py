@@ -54,6 +54,9 @@ def mock_agent():
         
         # Mock skill registry
         agent.skill_registry = MagicMock(spec=SkillRegistry)
+        # Add skills_dir attribute
+        agent.skill_registry.skills_dir = "/tmp/mock_skills"
+        
         agent.skill_registry.list_skills.return_value = [
             {'name': 'filesystem', 'description': 'Manage files and directories'}
         ]
@@ -64,34 +67,14 @@ def mock_agent():
             'instructions': 'Use this skill to manage files.'
         } if name == 'filesystem' else None
 
-        return agent
+        yield agent
 
 @pytest.mark.asyncio
 async def test_list_skills(mock_agent):
     list_skills_tool = next(t for t in mock_agent.tools if t.name == 'list_skills')
     
-    # Execute async function
-    # Note: FunctionTool wraps the function. If we access .fn or .func (depending on version), we get the raw function.
-    # In google-adk, FunctionTool stores the callable in ._fn usually, or we can call the tool itself?
-    # Actually, FunctionTool is callable if it implements __call__, but usually we want the underlying function for unit testing.
-    # Let's check how FunctionTool is implemented or just access the function passed to it.
-    # In AdaptiveAgent, we did: FunctionTool(list_skills, ...)
-    # So we can try to find where the callable is stored.
-    # Usually it's `tool.fn` or `tool._fn`.
-    
-    # Assuming `tool.fn` is the callable (based on typical implementations)
-    # If `tool.fn` is not available, we might need to inspect `tool`.
-    
-    # Let's assume we can call the tool directly if it's a FunctionTool instance?
-    # Or access the underlying function.
-    
-    # For now, let's try to access the function. 
-    # In the previous successful tests, we used `tool.func` or `tool.fn`.
-    # Let's try `tool.fn` as per my previous edits.
-    
     func = getattr(list_skills_tool, 'fn', getattr(list_skills_tool, 'func', None))
     if not func:
-        # Fallback for some implementations
         func = list_skills_tool._fn
         
     result = await func()
@@ -104,7 +87,9 @@ async def test_enable_skill(mock_agent):
     enable_skill_tool = next(t for t in mock_agent.tools if t.name == 'enable_skill')
     func = getattr(enable_skill_tool, 'fn', getattr(enable_skill_tool, 'func', None))
     
-    result = await func(skill_name="filesystem")
+    # We need to mock os.path.exists and importlib for local tool loading
+    with patch('os.path.exists', return_value=False): # Simulate no local tools file, fallback to MCP
+        result = await func(skill_name="filesystem")
     
     assert "'filesystem' enabled." in result
     assert "# Skill: filesystem" in mock_agent.instruction

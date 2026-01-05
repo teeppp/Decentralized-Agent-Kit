@@ -2,10 +2,15 @@ import json
 import os
 import uuid
 import httpx
+import logging
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -17,10 +22,11 @@ AGENT_URL = os.getenv("AGENT_URL", "http://agent:8000")
 async def index(request: Request):
     # Generate a session ID for this page load
     session_id = f"session_bff_{uuid.uuid4()}"
-    return templates.TemplateResponse("index.html", {"request": request, "session_id": session_id})
+    user_id = f"user_{session_id}"
+    return templates.TemplateResponse("index.html", {"request": request, "session_id": session_id, "user_id": user_id})
 
 @app.post("/chat")
-async def chat(request: Request, prompt: str = Form(...), session_id: str = Form(...)):
+async def chat(request: Request, prompt: str = Form(...), session_id: str = Form(...), user_id: str = Form(...)):
     
     async def event_generator():
         # 1. Send user message to UI immediately
@@ -32,11 +38,13 @@ async def chat(request: Request, prompt: str = Form(...), session_id: str = Form
         # 2.5. Ensure Session Exists
         # Use a local variable for the session ID to use in calls, initialized from the argument
         current_session_id = session_id
+        # Use the provided user ID
+        current_user_id = user_id
         
-        session_url = f"{AGENT_URL}/apps/dak_agent/users/bff_user/sessions/{current_session_id}"
+        session_url = f"{AGENT_URL}/apps/dak_agent/users/{current_user_id}/sessions/{current_session_id}"
         headers = {
             "Content-Type": "application/json",
-            "X-User-ID": "bff_user",
+            "X-User-ID": current_user_id,
             "X-Session-ID": current_session_id
         }
         
@@ -46,10 +54,7 @@ async def chat(request: Request, prompt: str = Form(...), session_id: str = Form
                 resp = await client.get(session_url, headers=headers)
                 if resp.status_code != 200:
                     # Create session
-                    create_url = f"{AGENT_URL}/apps/dak_agent/users/bff_user/sessions"
-                    # We can try to pass the session_id we want, but the server might generate one.
-                    # Let's try to pass it in the body if the API supports it, or just use what's returned.
-                    # The CLI sends empty dict.
+                    create_url = f"{AGENT_URL}/apps/dak_agent/users/{current_user_id}/sessions"
                     create_resp = await client.post(create_url, json={"id": current_session_id}, headers=headers)
                     if create_resp.status_code == 200:
                          data = create_resp.json()
@@ -61,11 +66,17 @@ async def chat(request: Request, prompt: str = Form(...), session_id: str = Form
                 yield f'<div class="chat-message error">Session Error: {str(e)}</div>\n'
                 return
 
+        # 2.6. Update Client Session ID if changed
+        if current_session_id != session_id:
+            logger.info(f"Updating client session ID to: {current_session_id}")
+            # Use HTMX OOB swap to update the hidden input field
+            yield f'<input type="hidden" id="session-id-input" name="session_id" value="{current_session_id}" hx-swap-oob="true">\n'
+
         # 3. Call ADK Agent
         url = f"{AGENT_URL}/run"
         payload = {
             "app_name": "dak_agent",
-            "user_id": "bff_user", # Simplified user ID
+            "user_id": current_user_id,
             "session_id": current_session_id,
             "new_message": {
                 "parts": [{"text": prompt}]
@@ -73,36 +84,13 @@ async def chat(request: Request, prompt: str = Form(...), session_id: str = Form
         }
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                # We try to stream, but if ADK doesn't support it, we'll get the whole response
-                async with client.stream("POST", url, json=payload, headers=headers) as response:
-                    
-                    full_text = ""
-                    
-                    # If the response is chunked/streaming
-                    async for chunk in response.aiter_bytes():
-                        # This is a bit naive for JSON parsing if it's not line-delimited
-                        # But let's see what we get. 
-                        # If ADK returns a single JSON object, we might get it in chunks.
-                        # For now, let's accumulate and try to parse, OR if it's NDJSON.
-                        # The standard ADK seems to return a JSON Array [ ... events ... ]
-                        
-                        # If we can't stream properly, we might just have to wait for the full response
-                        # But let's try to handle it.
-                        pass
-                    
-                    # Actually, since we know ADK might return a big JSON array, 
-                    # streaming that is hard without a proper parser.
-                    # Let's fallback to non-streaming request for safety first, 
-                    # then we can optimize for streaming if we see it supports it.
-                    pass
-            
             # Non-streaming fallback for now to ensure correctness
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(url, json=payload, headers=headers)
                 response.raise_for_status()
                 data = response.json()
-                print(f"DEBUG: Agent response: {json.dumps(data)}", flush=True)
+                logger.info(f"Agent response type: {type(data)}")
+                logger.info(f"Agent response content: {json.dumps(data)[:500]}...")
                 
                 # Remove loading indicator
                 yield '<div id="loading-indicator" hx-swap-oob="true"></div>\n'
@@ -111,40 +99,45 @@ async def chat(request: Request, prompt: str = Form(...), session_id: str = Form
                 thoughts = []
                 response_text = ""
                 
-                if isinstance(data, list):
-                    for event in data:
-                        if "content" in event and "parts" in event["content"]:
-                            for part in event["content"]["parts"]:
-                                # 1. Direct Text (Model thought or answer)
-                                if "text" in part:
-                                    # Heuristic: If it's a short text before a tool call, it might be a thought.
-                                    # But usually model text is the answer or explanation.
-                                    # For now, treat all text as part of the answer unless we want to be very specific.
-                                    # Actually, let's treat text as answer.
-                                    response_text += part["text"]
+                # Normalize data to list
+                events = data if isinstance(data, list) else [data]
+                
+                for event in events:
+                    # Handle standard ADK event format
+                    if "content" in event and "parts" in event["content"]:
+                        for part in event["content"]["parts"]:
+                            # 1. Direct Text (Model thought or answer)
+                            if "text" in part:
+                                response_text += part["text"]
+                            
+                            # 2. Tool Calls (Thoughts/Actions)
+                            elif "functionCall" in part:
+                                fc = part["functionCall"]
+                                name = fc.get("name", "unknown")
+                                args = json.dumps(fc.get("args", {}))
+                                thoughts.append(f'<div class="thought-item"><span class="thought-label">Action:</span> Called <strong>{name}</strong></div>')
+                                thoughts.append(f'<div class="thought-args">{args}</div>')
+                            
+                            # 3. Tool Responses (Observations)
+                            elif "functionResponse" in part:
+                                func_resp = part["functionResponse"]
+                                name = func_resp.get("name", "unknown")
                                 
-                                # 2. Tool Calls (Thoughts/Actions)
-                                elif "functionCall" in part:
-                                    fc = part["functionCall"]
-                                    name = fc.get("name", "unknown")
-                                    args = json.dumps(fc.get("args", {}))
-                                    thoughts.append(f'<div class="thought-item"><span class="thought-label">Action:</span> Called <strong>{name}</strong> with {args}</div>')
-                                
-                                # 3. Tool Responses (Observations)
-                                elif "functionResponse" in part:
-                                    func_resp = part["functionResponse"]
-                                    name = func_resp.get("name", "unknown")
+                                # Special handling for user-facing tools
+                                if name in ["ask_question", "attempt_answer"]:
+                                    if "response" in func_resp and "result" in func_resp["response"]:
+                                        response_text += str(func_resp["response"]["result"]) + "\n"
+                                else:
+                                    # Internal tool results go to thoughts
+                                    result = "No result"
+                                    if "response" in func_resp:
+                                        result = json.dumps(func_resp["response"])
                                     
-                                    # Special handling for user-facing tools
-                                    if name in ["ask_question", "attempt_answer"]:
-                                        if "response" in func_resp and "result" in func_resp["response"]:
-                                            response_text += str(func_resp["response"]["result"]) + "\n"
-                                    else:
-                                        # Internal tool results go to thoughts
-                                        result = "No result"
-                                        if "response" in func_resp:
-                                            result = json.dumps(func_resp["response"])
-                                        thoughts.append(f'<div class="thought-item"><span class="thought-label">Observation:</span> {name} returned: {result}</div>')
+                                    # Highlight Payment Errors
+                                    if "Payment Required" in result:
+                                        thoughts.append(f'<div class="thought-item error"><span class="thought-label">System:</span> <strong>Payment Required</strong></div>')
+                                    
+                                    thoughts.append(f'<div class="thought-item"><span class="thought-label">Observation:</span> {name} returned: {result[:200]}...</div>')
 
                 # Construct HTML
                 html_output = '<div class="chat-message assistant">'
@@ -167,6 +160,7 @@ async def chat(request: Request, prompt: str = Form(...), session_id: str = Form
                 yield html_output
 
         except Exception as e:
+            logger.error(f"Error in chat: {e}")
             yield f'<div class="chat-message error">Error: {str(e)}</div>\n'
             yield '<div id="loading-indicator" hx-swap-oob="true"></div>\n'
 

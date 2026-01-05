@@ -21,18 +21,24 @@ class SkillRegistry:
             logger.warning(f"Skills directory not found: {self.skills_dir}")
             return
 
-        for filename in os.listdir(self.skills_dir):
-            if filename.endswith(".yaml") or filename.endswith(".yml"):
-                skill_name = os.path.splitext(filename)[0]
-                filepath = os.path.join(self.skills_dir, filename)
-                try:
-                    with open(filepath, 'r') as f:
-                        skill_data = yaml.safe_load(f)
-                        if self._validate_skill_format(skill_name, skill_data):
-                            self.skills[skill_name] = skill_data
-                            logger.info(f"Loaded skill: {skill_name}")
-                except Exception as e:
-                    logger.error(f"Failed to load skill {skill_name}: {e}")
+        for root, dirs, files in os.walk(self.skills_dir):
+            for filename in files:
+                if filename.endswith(".yaml") or filename.endswith(".yml"):
+                    # If the file is named 'skill.yaml', use the parent directory name as the skill name
+                    if filename == 'skill.yaml':
+                        skill_name = os.path.basename(root)
+                    else:
+                        skill_name = os.path.splitext(filename)[0]
+                    
+                    filepath = os.path.join(root, filename)
+                    try:
+                        with open(filepath, 'r') as f:
+                            skill_data = yaml.safe_load(f)
+                            if self._validate_skill_format(skill_name, skill_data):
+                                self.skills[skill_name] = skill_data
+                                logger.info(f"Loaded skill: {skill_name} from {filepath}")
+                    except Exception as e:
+                        logger.error(f"Failed to load skill {skill_name} from {filepath}: {e}")
         
         self.loaded = True
 
