@@ -7,7 +7,7 @@ class TestRealSkillsLoading(unittest.TestCase):
     def test_load_real_skills(self):
         # Point to the real agent/skills directory
         current_dir = os.path.dirname(__file__)
-        skills_dir = os.path.abspath(os.path.join(current_dir, "..", "skills"))
+        skills_dir = os.path.abspath(os.path.join(current_dir, "../..", "skills"))
         
         registry = SkillRegistry(skills_dir)
         registry.load_skills()

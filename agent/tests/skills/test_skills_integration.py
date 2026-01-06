@@ -4,7 +4,7 @@ import sys
 from unittest.mock import MagicMock, patch, AsyncMock
 
 # Add agent directory to path
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 
 from dak_agent.skill_registry import SkillRegistry
 from google.adk.models import BaseLlm

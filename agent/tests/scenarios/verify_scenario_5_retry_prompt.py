@@ -14,7 +14,7 @@ os.environ['ENABLE_AP2_PROTOCOL'] = 'true'
 os.environ['GOOGLE_API_KEY'] = "fake_key" # Mocking, won't be used for real calls if we mock the client
 
 # Add agent directory to path
-sys.path.append(os.path.abspath("agent"))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 # from dak_agent.adaptive_agent import AdaptiveAgent
 # from google.adk.models.llm_response import LlmResponse
