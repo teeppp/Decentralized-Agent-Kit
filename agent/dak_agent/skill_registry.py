@@ -10,36 +10,37 @@ class SkillRegistry:
     Manages the loading, validation, and retrieval of Agent Skills.
     """
     
-    def __init__(self, skills_dir: str):
-        self.skills_dir = skills_dir
+    def __init__(self, skills_dirs: List[str]):
+        self.skills_dirs = skills_dirs
         self.skills: Dict[str, Dict[str, Any]] = {}
         self.loaded = False
 
     def load_skills(self):
-        """Load all skills from the skills directory."""
-        if not os.path.exists(self.skills_dir):
-            logger.warning(f"Skills directory not found: {self.skills_dir}")
-            return
-
-        for root, dirs, files in os.walk(self.skills_dir):
-            # 1. Check for SKILL.md (Standard)
-            if "SKILL.md" in files:
-                skill_name = os.path.basename(root)
-                filepath = os.path.join(root, "SKILL.md")
-                try:
-                    skill_data = self._load_skill_md(filepath)
-                    # Allow frontmatter to override directory name
-                    if 'name' not in skill_data:
-                        skill_data['name'] = skill_name
-                    
-                    if self._validate_skill_format(skill_data['name'], skill_data):
-                        self.skills[skill_data['name']] = skill_data
-                        logger.info(f"Loaded standard skill: {skill_data['name']} from {filepath}")
-                except Exception as e:
-                    logger.error(f"Failed to load standard skill from {filepath}: {e}")
-                
-                # If SKILL.md exists, we ignore other files in this directory to avoid duplicates/confusion
+        """Load all skills from the configured skills directories."""
+        for skills_dir in self.skills_dirs:
+            if not os.path.exists(skills_dir):
+                logger.warning(f"Skills directory not found: {skills_dir}")
                 continue
+
+            for root, dirs, files in os.walk(skills_dir):
+                # 1. Check for SKILL.md (Standard)
+                if "SKILL.md" in files:
+                    skill_name = os.path.basename(root)
+                    filepath = os.path.join(root, "SKILL.md")
+                    try:
+                        skill_data = self._load_skill_md(filepath)
+                        # Allow frontmatter to override directory name
+                        if 'name' not in skill_data:
+                            skill_data['name'] = skill_name
+                        
+                        if self._validate_skill_format(skill_data['name'], skill_data):
+                            self.skills[skill_data['name']] = skill_data
+                            logger.info(f"Loaded standard skill: {skill_data['name']} from {filepath}")
+                    except Exception as e:
+                        logger.error(f"Failed to load standard skill from {filepath}: {e}")
+                    
+                    # If SKILL.md exists, we ignore other files in this directory to avoid duplicates/confusion
+                    continue
         
         self.loaded = True
 

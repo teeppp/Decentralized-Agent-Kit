@@ -54,7 +54,8 @@ class AdaptiveAgent(LlmAgent):
         sub_agents: Optional[List[Any]] = None,
         after_model_callback: Optional[Any] = None,
         disable_mode_switching: bool = False,
-        mcp_url: Optional[str] = None
+        mcp_url: Optional[str] = None,
+        skills_dirs: Optional[List[str]] = None
     ):
         # Define Client-Side Tools
         
@@ -140,7 +141,17 @@ class AdaptiveAgent(LlmAgent):
             local_tools_to_add = []
 
             # Check for local tools first
-            skill_dir = os.path.join(self.skill_registry.skills_dir, skill_name)
+            skill_dir = None
+            for d in self.skill_registry.skills_dirs:
+                possible_path = os.path.join(d, skill_name)
+                if os.path.exists(possible_path):
+                    skill_dir = possible_path
+                    break
+            
+            if not skill_dir:
+                 logger.warning(f"Skill directory for {skill_name} not found in any configured paths.")
+                 return f"Error: Skill directory for {skill_name} not found."
+
             tools_file = os.path.join(skill_dir, "tools.py")
             
             if os.path.exists(tools_file):
@@ -305,8 +316,24 @@ class AdaptiveAgent(LlmAgent):
         # In Docker, we are in /app/dak_agent, and skills are in /app/skills
         # Locally, we are in agent/dak_agent, and skills are in agent/skills
         current_dir = os.path.dirname(__file__)
-        skills_dir = os.path.abspath(os.path.join(current_dir, "..", "skills"))
-        self.skill_registry = SkillRegistry(skills_dir)
+        
+        # Default skills dir if not provided
+        if not skills_dirs:
+            default_skills_dir = os.path.abspath(os.path.join(current_dir, "..", "skills"))
+            skills_dirs = [default_skills_dir]
+        else:
+            # Resolve relative paths
+            resolved_dirs = []
+            for d in skills_dirs:
+                if not os.path.isabs(d):
+                    # Resolve relative to the current working directory or agent root
+                    # We assume relative paths are relative to the project root or where the agent is run
+                    resolved_dirs.append(os.path.abspath(d))
+                else:
+                    resolved_dirs.append(d)
+            skills_dirs = resolved_dirs
+
+        self.skill_registry = SkillRegistry(skills_dirs)
         self.skill_registry.load_skills()
         self._active_skills = []
         

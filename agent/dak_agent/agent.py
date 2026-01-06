@@ -238,6 +238,13 @@ a2a_sub_agents = get_a2a_sub_agents()
 if a2a_sub_agents:
     logger.info(f"Loaded {len(a2a_sub_agents)} A2A peer agent(s)")
 
+# Parse AGENT_SKILLS_DIRS (colon-separated)
+skills_dirs_env = os.getenv("AGENT_SKILLS_DIRS")
+skills_dirs = None
+if skills_dirs_env:
+    skills_dirs = [d.strip() for d in skills_dirs_env.split(":") if d.strip()]
+    logger.info(f"Configured skill directories: {skills_dirs}")
+
 # Define the root agent
 # We wrap the standard LlmAgent with our AdaptiveAgent to enable dynamic mode switching
 root_agent = AdaptiveAgent(
@@ -247,6 +254,7 @@ root_agent = AdaptiveAgent(
     tools=root_agent_tools,
     sub_agents=a2a_sub_agents if a2a_sub_agents else None,
     after_model_callback=after_model_callback,
-    mcp_url=mcp_url
+    mcp_url=mcp_url,
+    skills_dirs=skills_dirs
 )
 
