@@ -8,7 +8,7 @@ from dak_agent.skill_registry import SkillRegistry
 class TestSkillRegistryStandard(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
-        self.registry = SkillRegistry(self.test_dir)
+        self.registry = SkillRegistry([self.test_dir])
 
     def tearDown(self):
         shutil.rmtree(self.test_dir)

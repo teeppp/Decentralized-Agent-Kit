@@ -54,8 +54,8 @@ def mock_agent():
         
         # Mock skill registry
         agent.skill_registry = MagicMock(spec=SkillRegistry)
-        # Add skills_dir attribute
-        agent.skill_registry.skills_dir = "/tmp/mock_skills"
+        # Add skills_dirs attribute (list instead of single dir)
+        agent.skill_registry.skills_dirs = ["/tmp/mock_skills"]
         
         agent.skill_registry.list_skills.return_value = [
             {'name': 'filesystem', 'description': 'Manage files and directories'}
@@ -87,8 +87,14 @@ async def test_enable_skill(mock_agent):
     enable_skill_tool = next(t for t in mock_agent.tools if t.name == 'enable_skill')
     func = getattr(enable_skill_tool, 'fn', getattr(enable_skill_tool, 'func', None))
     
-    # We need to mock os.path.exists and importlib for local tool loading
-    with patch('os.path.exists', return_value=False): # Simulate no local tools file, fallback to MCP
+    # Mock os.path.exists to return True for skill dir, False for tools.py
+    def mock_exists(path):
+        # Return True for skill directories, False for tools.py
+        if path.endswith("tools.py"):
+            return False
+        return True  # Skill directory exists
+    
+    with patch('dak_agent.adaptive_agent.os.path.exists', side_effect=mock_exists):
         result = await func(skill_name="filesystem")
     
     assert "'filesystem' enabled." in result

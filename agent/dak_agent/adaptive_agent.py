@@ -140,54 +140,61 @@ class AdaptiveAgent(LlmAgent):
             tools_to_add_from_mcp = []
             local_tools_to_add = []
 
-            # Check for local tools first
-            skill_dir = None
-            for d in self.skill_registry.skills_dirs:
-                possible_path = os.path.join(d, skill_name)
-                if os.path.exists(possible_path):
-                    skill_dir = possible_path
-                    break
-            
-            if not skill_dir:
-                 logger.warning(f"Skill directory for {skill_name} not found in any configured paths.")
-                 return f"Error: Skill directory for {skill_name} not found."
-
-            tools_file = os.path.join(skill_dir, "tools.py")
-            
-            if os.path.exists(tools_file):
-                import importlib.util
-                import sys
+            # Load tools based on skill type
+            if skill:
+                # CURATED SKILL: Check for local tools.py first, then fall back to MCP
+                skill_dir = None
+                for d in self.skill_registry.skills_dirs:
+                    possible_path = os.path.join(d, skill_name)
+                    if os.path.exists(possible_path):
+                        skill_dir = possible_path
+                        break
                 
-                try:
-                    # Dynamic import of tools.py
-                    spec = importlib.util.spec_from_file_location(f"skills.{skill_name}.tools", tools_file)
-                    module = importlib.util.module_from_spec(spec)
-                    sys.modules[f"skills.{skill_name}.tools"] = module
-                    spec.loader.exec_module(module)
+                if not skill_dir:
+                    logger.warning(f"Skill directory for {skill_name} not found in any configured paths.")
+                    return f"Error: Skill directory for {skill_name} not found."
+
+                tools_file = os.path.join(skill_dir, "tools.py")
+                
+                if os.path.exists(tools_file):
+                    import importlib.util
+                    import sys
                     
-                    for tool_name in required_tools:
-                        if tool_name not in current_tool_names:
-                            if hasattr(module, tool_name):
-                                func = getattr(module, tool_name)
-                                # Check if it's a callable
-                                if callable(func):
-                                    # Create FunctionTool
-                                    # We set require_confirmation=False to allow autonomous execution and AP2 flow
-                                    local_tools_to_add.append(FunctionTool(func, require_confirmation=False))
-                                    logger.info(f"Loaded local tool '{tool_name}' from {skill_name}")
+                    try:
+                        # Dynamic import of tools.py
+                        spec = importlib.util.spec_from_file_location(f"skills.{skill_name}.tools", tools_file)
+                        module = importlib.util.module_from_spec(spec)
+                        sys.modules[f"skills.{skill_name}.tools"] = module
+                        spec.loader.exec_module(module)
+                        
+                        for tool_name in required_tools:
+                            if tool_name not in current_tool_names:
+                                if hasattr(module, tool_name):
+                                    func = getattr(module, tool_name)
+                                    # Check if it's a callable
+                                    if callable(func):
+                                        # Create FunctionTool
+                                        # We set require_confirmation=False to allow autonomous execution and AP2 flow
+                                        local_tools_to_add.append(FunctionTool(func, require_confirmation=False))
+                                        logger.info(f"Loaded local tool '{tool_name}' from {skill_name}")
+                                    else:
+                                        logger.warning(f"'{tool_name}' in {skill_name} is not callable.")
+                                        tools_to_add_from_mcp.append(tool_name) # Fallback to MCP
                                 else:
-                                    logger.warning(f"'{tool_name}' in {skill_name} is not callable.")
                                     tools_to_add_from_mcp.append(tool_name) # Fallback to MCP
-                            else:
-                                tools_to_add_from_mcp.append(tool_name) # Fallback to MCP
-                except Exception as e:
-                    logger.error(f"Failed to load local tools for {skill_name}: {e}")
-                    # Fallback to MCP for all
+                    except Exception as e:
+                        logger.error(f"Failed to load local tools for {skill_name}: {e}")
+                        # Fallback to MCP for all
+                        for tool_name in required_tools:
+                            if tool_name not in current_tool_names:
+                                tools_to_add_from_mcp.append(tool_name)
+                else:
+                    # No local tools file, all tools from MCP
                     for tool_name in required_tools:
                         if tool_name not in current_tool_names:
                             tools_to_add_from_mcp.append(tool_name)
             else:
-                # No local tools file, assume all are MCP
+                # REMOTE TOOL (Zero-Config): All tools come directly from MCP
                 for tool_name in required_tools:
                     if tool_name not in current_tool_names:
                         tools_to_add_from_mcp.append(tool_name)
