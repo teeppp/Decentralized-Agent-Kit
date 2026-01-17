@@ -10,37 +10,63 @@ class SkillRegistry:
     Manages the loading, validation, and retrieval of Agent Skills.
     """
     
-    def __init__(self, skills_dir: str):
-        self.skills_dir = skills_dir
+    def __init__(self, skills_dirs: List[str]):
+        self.skills_dirs = skills_dirs
         self.skills: Dict[str, Dict[str, Any]] = {}
         self.loaded = False
 
     def load_skills(self):
-        """Load all skills from the skills directory."""
-        if not os.path.exists(self.skills_dir):
-            logger.warning(f"Skills directory not found: {self.skills_dir}")
-            return
+        """Load all skills from the configured skills directories."""
+        for skills_dir in self.skills_dirs:
+            if not os.path.exists(skills_dir):
+                logger.warning(f"Skills directory not found: {skills_dir}")
+                continue
 
-        for root, dirs, files in os.walk(self.skills_dir):
-            for filename in files:
-                if filename.endswith(".yaml") or filename.endswith(".yml"):
-                    # If the file is named 'skill.yaml', use the parent directory name as the skill name
-                    if filename == 'skill.yaml':
-                        skill_name = os.path.basename(root)
-                    else:
-                        skill_name = os.path.splitext(filename)[0]
-                    
-                    filepath = os.path.join(root, filename)
+            for root, dirs, files in os.walk(skills_dir):
+                # 1. Check for SKILL.md (Standard)
+                if "SKILL.md" in files:
+                    skill_name = os.path.basename(root)
+                    filepath = os.path.join(root, "SKILL.md")
                     try:
-                        with open(filepath, 'r') as f:
-                            skill_data = yaml.safe_load(f)
-                            if self._validate_skill_format(skill_name, skill_data):
-                                self.skills[skill_name] = skill_data
-                                logger.info(f"Loaded skill: {skill_name} from {filepath}")
+                        skill_data = self._load_skill_md(filepath)
+                        # Allow frontmatter to override directory name
+                        if 'name' not in skill_data:
+                            skill_data['name'] = skill_name
+                        
+                        if self._validate_skill_format(skill_data['name'], skill_data):
+                            self.skills[skill_data['name']] = skill_data
+                            logger.info(f"Loaded standard skill: {skill_data['name']} from {filepath}")
                     except Exception as e:
-                        logger.error(f"Failed to load skill {skill_name} from {filepath}: {e}")
+                        logger.error(f"Failed to load standard skill from {filepath}: {e}")
+                    
+                    # If SKILL.md exists, we ignore other files in this directory to avoid duplicates/confusion
+                    continue
         
         self.loaded = True
+
+    def _load_skill_md(self, filepath: str) -> Dict[str, Any]:
+        """Load a skill from a Markdown file with YAML frontmatter."""
+        with open(filepath, 'r') as f:
+            content = f.read()
+
+        # Parse Frontmatter
+        if content.startswith("---"):
+            try:
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    frontmatter = yaml.safe_load(parts[1])
+                    instructions = parts[2].strip()
+                    
+                    if not isinstance(frontmatter, dict):
+                        raise ValueError("Invalid frontmatter format")
+                        
+                    skill_data = frontmatter
+                    skill_data['instructions'] = instructions
+                    return skill_data
+            except Exception as e:
+                raise ValueError(f"Failed to parse frontmatter: {e}")
+        
+        raise ValueError("No valid YAML frontmatter found in SKILL.md")
 
     def _validate_skill_format(self, name: str, data: Dict) -> bool:
         """Basic format validation for a skill."""
