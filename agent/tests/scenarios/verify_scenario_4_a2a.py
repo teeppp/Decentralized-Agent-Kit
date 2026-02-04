@@ -12,7 +12,7 @@ os.environ['SOLANA_USE_MOCK'] = 'true'
 os.environ['ENABLE_AP2_PROTOCOL'] = 'true'
 
 # Add agent directory to path
-sys.path.append(os.path.abspath("agent"))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 
 from dak_agent.decorators import PaidToolWrapper
 from dak_agent.errors import PaymentRequiredError

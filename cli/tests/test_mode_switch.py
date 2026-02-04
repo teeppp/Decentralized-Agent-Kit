@@ -1,13 +1,13 @@
 import os
 import sys
 
-# Add src to path (assuming running from cli dir)
-sys.path.append(os.path.join(os.getcwd(), "src"))
+# Add cli root to path
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from client import AgentClient
+from src.client import AgentClient
 
 def test_mode_switch():
-    client = AgentClient(base_url="http://localhost:8000")
+    client = AgentClient()
     
     print("--- Starting Mode Switch Test ---")
     
