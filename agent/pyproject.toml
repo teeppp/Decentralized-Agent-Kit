@@ -5,12 +5,11 @@ description = "Decentralized Agent Kit Agent with A2A and MCP support"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "google-adk[a2a]>=0.1.0",
+    "google-adk[a2a]>=1.18.0,<2",
     "mcp>=0.1.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.20.0",
     "pydantic>=2.0.0",
-    "google-generativeai>=0.8.5",
     "python-dotenv>=1.2.1",
     "openai>=2.8.1",
     "anthropic>=0.74.1",
@@ -23,7 +22,6 @@ dependencies = [
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp>=1.27.0",
     "litellm>=1.0.0",
-    "symbol-sdk-python>=3.0.3",
     # Solana + AP2/x402 support
     "solana>=0.34.0",
     "solders>=0.21.0",
