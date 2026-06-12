@@ -18,7 +18,6 @@ services:
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_HOST=${LANGFUSE_BASE_URL}
-      - PYTHONPATH=/app/dak_agent
     depends_on:
       - mcp-server
     ports:

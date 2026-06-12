@@ -19,9 +19,7 @@ class TestAdaptiveAgentRefinement:
             tools=self.mock_tools,
             disable_mode_switching=False
         )
-        # Mock Meta-Agent client
-        self.agent._meta_agent_client = MagicMock()
-        
+
     @patch('dak_agent.mode_manager.ModeManager.generate_mode_config')
     @pytest.mark.asyncio
     async def test_history_clearing_on_switch(self, mock_generate_config):

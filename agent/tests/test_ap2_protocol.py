@@ -9,7 +9,6 @@ class TestAp2Protocol:
         # Mock dependencies to avoid full initialization
         with patch('dak_agent.adaptive_agent.ModeManager'), \
              patch('dak_agent.adaptive_agent.SkillRegistry'), \
-             patch('dak_agent.adaptive_agent.get_solana_wallet_manager'), \
              patch('dak_agent.adaptive_agent.McpToolset'):
             
             agent = AdaptiveAgent(model="test-model", name="test_agent", instruction="test-instruction", tools=[])
