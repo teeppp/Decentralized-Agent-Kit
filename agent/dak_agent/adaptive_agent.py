@@ -38,6 +38,7 @@ class AdaptiveAgent(LlmAgent):
     _original_callback: Optional[Any] = PrivateAttr(default=None)
     _disable_mode_switching: bool = PrivateAttr(default=False)
     _mcp_url: str = PrivateAttr(default="")
+    _mcp_servers: Dict[str, Dict] = PrivateAttr(default_factory=dict)
     _meta_agent_client: Optional[genai.Client] = PrivateAttr(default=None)
     skill_registry: Optional[SkillRegistry] = Field(default=None, exclude=True)
     available_remote_tools: Dict[str, str] = Field(default_factory=dict, exclude=True)
@@ -205,15 +206,32 @@ class AdaptiveAgent(LlmAgent):
 
             # Add MCP Tools
             if tools_to_add_from_mcp:
-                if self._mcp_url:
+                mcp_target_name = skill.get('mcp_server') if skill else None
+                mcp_config = self._mcp_servers.get(mcp_target_name) if mcp_target_name else None
+                
+                target_url = self._mcp_url
+                target_type = "http"
+                
+                if mcp_config:
+                    target_url = mcp_config.get("url", target_url)
+                    target_type = mcp_config.get("type", "http")
+                    logger.info(f"Skill '{skill_name}' uses MCP server '{mcp_target_name}' at {target_url} ({target_type})")
+                
+                if target_url:
                     try:
+                        if target_type == "sse":
+                            from google.adk.tools.mcp_tool import SseConnectionParams
+                            conn_params = SseConnectionParams(url=target_url)
+                        else:
+                            conn_params = StreamableHTTPConnectionParams(url=target_url)
+                            
                         filtered_toolset = McpToolset(
-                            connection_params=StreamableHTTPConnectionParams(url=self._mcp_url),
+                            connection_params=conn_params,
                             tool_filter=tools_to_add_from_mcp,
                             require_confirmation=False
                         )
                         self.tools.append(filtered_toolset)
-                        logger.info(f"Added filtered McpToolset for tools: {tools_to_add_from_mcp}")
+                        logger.info(f"Added filtered McpToolset for tools: {tools_to_add_from_mcp} via {target_url}")
                     except Exception as e:
                         logger.error(f"Failed to create McpToolset for {skill_name}: {e}")
                         return f"Error enabling {skill_name}: Failed to connect to tools. {e}"
@@ -358,6 +376,28 @@ class AdaptiveAgent(LlmAgent):
         
         # Store MCP URL
         self._mcp_url = mcp_url or os.getenv("MCP_SERVER_URL", "http://mcp-server:8000/mcp")
+        self._mcp_servers = {}
+        
+        # Load multiple MCP servers from agent_config.yaml
+        config_paths = [
+            "/app/agent_config.yaml",
+            os.path.abspath(os.path.join(current_dir, "..", "agent_config.yaml")),
+            "agent_config.yaml"
+        ]
+        import yaml
+        for path in config_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, "r") as f:
+                        config = yaml.safe_load(f)
+                        if config and "mcp_servers" in config:
+                            for srv in config["mcp_servers"]:
+                                if "name" in srv:
+                                    self._mcp_servers[srv["name"]] = srv
+                            logger.info(f"Loaded {len(self._mcp_servers)} MCP servers from {path}")
+                    break
+                except Exception as e:
+                    logger.warning(f"Failed to load MCP servers from {path}: {e}")
         
         # AP2 Protocol Feature Flag (Experimental)
         self._enable_ap2 = os.getenv("ENABLE_AP2_PROTOCOL", "false").lower() == "true"
