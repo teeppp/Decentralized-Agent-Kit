@@ -1,0 +1,104 @@
+"""Unit tests for the BFF. The agent API is mocked with respx."""
+import os
+import sys
+
+import respx
+from fastapi.testclient import TestClient
+from httpx import Response
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import main
+from main import AGENT_URL, app
+
+client = TestClient(app)
+
+SESSION_ID = "session_bff_test"
+USER_ID = "user_session_bff_test"
+
+
+def post_chat(prompt: str = "hello"):
+    return client.post(
+        "/chat",
+        data={"prompt": prompt, "session_id": SESSION_ID, "user_id": USER_ID},
+    )
+
+
+def adk_text_event(text: str) -> dict:
+    return {"content": {"parts": [{"text": text}]}}
+
+
+def test_index_returns_chat_page():
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "session_bff_" in response.text
+
+
+@respx.mock
+def test_chat_renders_agent_answer():
+    respx.get(f"{AGENT_URL}/apps/dak_agent/users/{USER_ID}/sessions/{SESSION_ID}").mock(
+        return_value=Response(200, json={"id": SESSION_ID})
+    )
+    respx.post(f"{AGENT_URL}/run").mock(
+        return_value=Response(200, json=[adk_text_event("Hello from the agent!")])
+    )
+
+    response = post_chat("hello")
+
+    assert response.status_code == 200
+    assert "Hello from the agent!" in response.text
+    # The user prompt is echoed back into the chat log
+    assert 'class="chat-message user"' in response.text
+
+
+@respx.mock
+def test_chat_creates_session_when_missing():
+    respx.get(f"{AGENT_URL}/apps/dak_agent/users/{USER_ID}/sessions/{SESSION_ID}").mock(
+        return_value=Response(404)
+    )
+    create_route = respx.post(f"{AGENT_URL}/apps/dak_agent/users/{USER_ID}/sessions").mock(
+        return_value=Response(200, json={"id": "session_new"})
+    )
+    respx.post(f"{AGENT_URL}/run").mock(
+        return_value=Response(200, json=[adk_text_event("ok")])
+    )
+
+    response = post_chat()
+
+    assert response.status_code == 200
+    assert create_route.called
+    # The new session id is pushed back to the client via an OOB swap
+    assert 'value="session_new"' in response.text
+
+
+@respx.mock
+def test_chat_renders_tool_calls_as_thoughts():
+    respx.get(f"{AGENT_URL}/apps/dak_agent/users/{USER_ID}/sessions/{SESSION_ID}").mock(
+        return_value=Response(200, json={"id": SESSION_ID})
+    )
+    events = [
+        {"content": {"parts": [{"functionCall": {"name": "read_file", "args": {"path": "x"}}}]}},
+        {"content": {"parts": [{"functionResponse": {"name": "read_file", "response": {"result": "data"}}}]}},
+        adk_text_event("done"),
+    ]
+    respx.post(f"{AGENT_URL}/run").mock(return_value=Response(200, json=events))
+
+    response = post_chat("read x")
+
+    assert response.status_code == 200
+    assert "Thinking Process" in response.text
+    assert "read_file" in response.text
+    assert "done" in response.text
+
+
+@respx.mock
+def test_chat_reports_agent_error():
+    respx.get(f"{AGENT_URL}/apps/dak_agent/users/{USER_ID}/sessions/{SESSION_ID}").mock(
+        return_value=Response(200, json={"id": SESSION_ID})
+    )
+    respx.post(f"{AGENT_URL}/run").mock(return_value=Response(500, text="boom"))
+
+    response = post_chat()
+
+    assert response.status_code == 200  # errors are rendered into the stream
+    assert 'class="chat-message error"' in response.text

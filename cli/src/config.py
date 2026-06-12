@@ -40,4 +40,8 @@ class ConfigManager:
         self.save_config()
 
     def get_agent_url(self) -> str:
+        # DAK_AGENT_URL overrides the stored config (used by tests/CI and headless runs)
+        env_url = os.getenv("DAK_AGENT_URL")
+        if env_url:
+            return env_url
         return self.config.get("agent_url", "http://localhost:8000")

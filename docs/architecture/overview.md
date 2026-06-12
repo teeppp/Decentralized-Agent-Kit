@@ -11,11 +11,10 @@ The backend service responsible for:
 - **A2A Protocol**: Handling Agent-to-Agent communication via `/task/send` (or `/run`).
 - **MCP Server**: Exposing tools and resources via the Model Context Protocol.
 
-### 2. UI Service (`ui/`)
-A Next.js-based web interface for interacting with the agent.
-- **Authentication**: NextAuth.js integration for secure access (OAuth, Credentials).
-- **Chat Interface**: Real-time chat with the agent.
-- **Task Management**: Visualizing and managing agent tasks.
+### 2. BFF UI Service (`bff/`)
+A lightweight FastAPI + HTMX web interface for interacting with the agent
+(Backend For Frontend pattern), served at http://localhost:8002.
+- **Chat Interface**: Streaming chat with the agent, including a "thinking process" view of tool calls.
 
 ### 3. CLI Tool (`cli/`)
 A command-line interface for developers and power users.
@@ -24,7 +23,7 @@ A command-line interface for developers and power users.
 
 ```mermaid
 graph LR
-    User[User] -->|Interacts| UI["Web UI (Next.js)"]
+    User[User] -->|Interacts| UI["Web UI (BFF: FastAPI + HTMX)"]
     User -->|Commands| CLI[CLI Tool]
     
     UI -->|API Requests| Agent["DAK Agent (Python)"]
