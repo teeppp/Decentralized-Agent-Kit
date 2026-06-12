@@ -71,7 +71,6 @@ docker compose up --build -d
 ### Getting Started
 - [Docker Deployment Guide](docs/getting-started/docker_deployment.md)
 - [Installation & Setup](docs/getting-started/installation.md)
-- [Local Authentication Quick Start](docs/getting-started/local_auth.md)
 
 ### Guides
 - [MCP Integration Guide](docs/guides/mcp_integration.md) - Tool development and usage

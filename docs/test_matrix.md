@@ -9,12 +9,17 @@ This document outlines the key environment variables that control the agent's be
 | `ENABLE_AP2_PROTOCOL` | `false` | Enables the AP2/x402 payment protocol features (PaymentRequired handling, Wallet tools). |
 | `ENABLE_A2A_CONSUMER` | `false` | Enables Agent-to-Agent (A2A) consumer capabilities. |
 | `ENABLE_ENFORCER_MODE` | `false` | Enables "Enforcer Mode" where the agent is restricted to tool usage only (no direct text). |
-| `SOLANA_USE_MOCK` | `false` | **CRITICAL**: If `true`, uses a mock Solana wallet with 1000 SOL. If `false`, attempts to connect to real network. **Note**: Currently hardcoded to `True` in `solana_wallet_manager.py`. |
+| `SOLANA_USE_MOCK` | `true` | **CRITICAL**: If `true` (the default), uses a mock Solana wallet with 1000 SOL. Set to `false` explicitly to connect to a real network. |
 | `SOLANA_NETWORK` | `devnet` | Target Solana network (`devnet`, `mainnet`, or RPC URL). |
 | `AGENT_INSTRUCTION` | (Default Prompt) | The system instruction for the agent. Critical for defining behavior (e.g., "You are a Consumer Agent"). |
 | `MCP_SERVER_URL` | `http://mcp-server:8000/mcp` | URL of the Model Context Protocol server. |
 | `LANGFUSE_PUBLIC_KEY` | - | Langfuse Public Key for observability. |
 | `LANGFUSE_SECRET_KEY` | - | Langfuse Secret Key for observability. |
+
+> [!NOTE]
+> The scenarios below are automated in `tests/integration/` (run via
+> `docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --wait`
+> followed by `cd tests/integration && uv run pytest`). They also run in CI.
 
 ## Test Scenarios
 
@@ -51,7 +56,7 @@ This document outlines the key environment variables that control the agent's be
 
 ## Browser Verification Plan (Manual/Agentic)
 
-The following scenarios must be verified via the browser UI (`http://localhost:3000` or equivalent) to ensure the user experience is correct.
+The following scenarios must be verified via the BFF web UI (`http://localhost:8002`) to ensure the user experience is correct.
 
 1.  **Basic Chat & Tool Usage**:
     - Input: "Hello" -> Response: Greeting.

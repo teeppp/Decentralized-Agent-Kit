@@ -27,17 +27,10 @@ cp .env.example .env
 Edit `.env` and configure required variables:
 
 ```bash
-# Required: Google API Key for Gemini
+# Required: API key matching MODEL_NAME (Gemini by default)
 GOOGLE_API_KEY=your_google_api_key_here
 
-# Required: NextAuth Secret (generate with: openssl rand -base64 32)
-NEXTAUTH_SECRET=your_nextauth_secret_here
-
-# Optional: OAuth Providers
-GOOGLE_CLIENT_ID=your_google_oauth_client_id
-GOOGLE_CLIENT_SECRET=your_google_oauth_client_secret
-
-# Optional: Alternative LLM Providers
+# Optional: Alternative LLM providers
 OPENAI_API_KEY=your_openai_key
 ANTHROPIC_API_KEY=your_anthropic_key
 ```
@@ -51,8 +44,10 @@ docker compose up --build -d
 This will start:
 - **Agent** (port 8000): Main DAK agent with LLM integration
 - **MCP Server** (port 8001): Tool server for MCP protocol
-- **UI** (port 3000): Next.js web interface
+- **BFF UI** (port 8002): FastAPI + HTMX web interface
 - **PostgreSQL** (port 5432): Database for conversation history
+
+Ollama (local LLM) is optional: `docker compose --profile local-llm up -d`.
 
 ### 4. Verify Deployment
 
@@ -66,14 +61,14 @@ Expected output:
 ```
 NAME                                      STATUS
 decentralized-agent-kit-agent-1          Up
+decentralized-agent-kit-bff-1            Up
 decentralized-agent-kit-mcp-server-1     Up
 decentralized-agent-kit-postgres-1       Up
-decentralized-agent-kit-ui-1             Up
 ```
 
 ### 5. Access the Application
 
-- **Web UI**: http://localhost:3000
+- **Web UI (BFF)**: http://localhost:8002
 - **Agent API**: http://localhost:8000
 - **MCP Server**: http://localhost:8001
 
@@ -81,13 +76,14 @@ decentralized-agent-kit-ui-1             Up
 
 ### Agent Service
 
-**Container**: `decentralized-agent-kit-agent-1`  
-**Port**: `8000`  
-**Health Check**: `http://localhost:8000/`
+**Container**: `decentralized-agent-kit-agent-1`
+**Port**: `8000`
+**Health Check**: `http://localhost:8000/list-apps`
 
 **Responsibilities**:
-- Main LLM interaction
+- Main LLM interaction (via LiteLLM)
 - MCP Client for tool discovery/execution
+- Agent Skills (SKILL.md) loading
 - State management with PostgreSQL
 - A2A (Agent-to-Agent) protocol handler
 
@@ -98,67 +94,58 @@ docker compose logs agent -f
 
 ### MCP Server
 
-**Container**: `decentralized-agent-kit-mcp-server-1`  
-**Port**: `8001` (mapped from internal 8000)  
-**Health Check**: `http://localhost:8001/mcp`
+**Container**: `decentralized-agent-kit-mcp-server-1`
+**Port**: `8001` (mapped from internal 8000)
+**Endpoint**: `http://localhost:8001/mcp`
 
 **Responsibilities**:
-- Expose tools via MCP protocol
-- Handle tool execution requests
+- Expose tools via MCP protocol (streamable HTTP)
+- Handle tool execution requests against the mounted `/projects` workspace
 
 **Logs**:
 ```bash
 docker compose logs mcp-server -f
 ```
 
-### UI Service
+### BFF UI Service
 
-**Container**: `decentralized-agent-kit-ui-1`  
-**Port**: `3000`  
-**Health Check**: `http://localhost:3000/`
+**Container**: `decentralized-agent-kit-bff-1`
+**Port**: `8002` (mapped from internal 8000)
+**Health Check**: `http://localhost:8002/`
 
 **Responsibilities**:
-- Web interface for agent interaction
-- NextAuth.js authentication
-- Chat history display
+- Web chat interface for agent interaction (FastAPI + HTMX)
+- Renders agent tool calls as a "thinking process" view
 
 **Logs**:
 ```bash
-docker compose logs ui -f
+docker compose logs bff -f
 ```
 
 ## Configuration
 
-### Environment Variables
-
-#### Agent Service
+### Environment Variables (Agent)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `GOOGLE_API_KEY` | Yes* | - | Google Gemini API key |
 | `OPENAI_API_KEY` | Yes* | - | OpenAI API key |
 | `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key |
-| `GEMINI_MODEL` | No | `gemini-3-pro-preview` | Gemini model name |
-| `LLM_PROVIDER` | No | `gemini` | LLM provider (`gemini`, `openai`, `anthropic`) |
+| `MODEL_NAME` | No | `gemini-2.5-flash` | LiteLLM model name |
 | `DATABASE_URL` | No | Auto-configured | PostgreSQL connection string |
-| `MCP_SERVER_URL` | No | `http://mcp-server:8000/mcp` | MCP Server URL |
-| `ENABLE_ENFORCER_MODE` | No | `false` | Enable strict ReAct pattern |
+| `MCP_SERVER_URL` | No | `http://mcp-server:8000/mcp` | Default MCP server URL |
+| `ENABLE_ENFORCER_MODE` | No | `false` | Enable strict ReAct pattern (Ulysses Pact) |
+| `ENABLE_AP2_PROTOCOL` | No | `false` | Enable agent-to-agent payments (experimental) |
+| `SOLANA_USE_MOCK` | No | `true` | Mock Solana wallet (no real transactions) |
+| `AGENT_SKILLS_DIRS` | No | `/app/skills` | Colon-separated skill directories |
 | `LANGFUSE_PUBLIC_KEY` | No | - | LangFuse Public Key |
 | `LANGFUSE_SECRET_KEY` | No | - | LangFuse Secret Key |
 | `LANGFUSE_HOST` | No | `https://cloud.langfuse.com` | LangFuse Host |
 
 *At least one LLM provider API key is required
 
-#### UI Service
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `NEXTAUTH_SECRET` | Yes | - | NextAuth.js secret (32+ chars) |
-| `NEXTAUTH_URL` | No | `http://localhost:3000` | App URL |
-| `NEXT_PUBLIC_AGENT_URL` | No | `http://localhost:8000` | Agent API URL |
-| `NEXT_PUBLIC_REQUIRE_AUTH` | No | `false` | Require authentication |
-| `GOOGLE_CLIENT_ID` | No | - | Google OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | No | - | Google OAuth secret |
+Additional MCP servers and A2A peers are configured in `agent/agent_config.yaml`
+(mounted into the container by docker-compose).
 
 ### Volume Mounts
 
@@ -188,7 +175,7 @@ Specific service:
 ```bash
 docker compose logs agent -f
 docker compose logs mcp-server -f
-docker compose logs ui -f
+docker compose logs bff -f
 ```
 
 ### Restart Services
@@ -233,6 +220,16 @@ docker compose exec agent bash
 docker compose exec mcp-server bash
 ```
 
+## Integration Testing (no API keys)
+
+The full stack can run against a deterministic fake LLM:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build --wait
+cd tests/integration && uv run pytest
+docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
+```
+
 ## Troubleshooting
 
 ### Service Won't Start
@@ -274,20 +271,18 @@ docker compose ps postgres
 
 # Restart database service
 docker compose restart postgres
-
-# Agent will fall back to in-memory state manager
 ```
 
-### UI Can't Connect to Agent
+### BFF Can't Connect to Agent
 
-**Symptoms**: 500 errors or CORS issues in browser console
+**Symptoms**: "Session Error" or error bubbles in the chat UI
 
 **Solution**:
-1. Verify `NEXT_PUBLIC_AGENT_URL` in `.env`
-2. Check agent CORS configuration in `agent/src/main.py`
+1. Verify the agent is healthy: `curl http://localhost:8000/list-apps`
+2. Check the BFF's `AGENT_URL` (defaults to `http://agent:8000` in compose)
 3. Restart both services:
    ```bash
-   docker compose restart agent ui
+   docker compose restart agent bff
    ```
 
 ### Out of Memory
@@ -306,26 +301,15 @@ docker compose restart postgres
 
 ### Security Checklist
 
-- [ ] Change `NEXTAUTH_SECRET` to a strong random value
-- [ ] Use HTTPS with proper SSL certificates
-- [ ] Set `NEXT_PUBLIC_REQUIRE_AUTH=true`
-- [ ] Configure OAuth providers with production URLs
-- [ ] Restrict CORS origins in `agent/src/main.py`
+- [ ] Use HTTPS with proper SSL certificates and an authenticating reverse proxy
 - [ ] Use strong database passwords
 - [ ] Enable Docker secrets for sensitive values
+- [ ] Restrict the MCP server's workspace mount (it executes shell commands)
 - [ ] Set up regular database backups
 - [ ] Configure log rotation
 - [ ] Implement rate limiting
 
 ### Scaling
-
-**Horizontal Scaling**:
-```yaml
-services:
-  agent:
-    deploy:
-      replicas: 3
-```
 
 **External Database**:
 Replace PostgreSQL with a managed PostgreSQL service (e.g., AWS RDS, Google Cloud SQL).
@@ -334,9 +318,8 @@ Replace PostgreSQL with a managed PostgreSQL service (e.g., AWS RDS, Google Clou
 
 **Health Checks**:
 ```bash
-curl http://localhost:8000/
-curl http://localhost:8001/mcp
-curl http://localhost:3000/
+curl http://localhost:8000/list-apps
+curl http://localhost:8002/
 ```
 
 **Resource Usage**:
@@ -347,6 +330,5 @@ docker stats
 ## Additional Resources
 
 - [Docker Compose Documentation](https://docs.docker.com/compose/)
-- [Docker Best Practices](https://docs.docker.com/develop/dev-best-practices/)
 - [MCP Integration Guide](../guides/mcp_integration.md)
 - [CLI Usage Guide](../guides/cli_usage.md)

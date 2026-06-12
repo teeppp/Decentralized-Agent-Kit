@@ -8,8 +8,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://username:password@postgres:5432/postgres
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-dev-secret-change-in-production}
-      - REQUIRE_AUTH=${REQUIRE_AUTH:-false}
       - MCP_SERVER_URL=http://mcp-server:8000/mcp
       - MODEL_NAME=${MODEL_NAME:-gemini-2.5-flash}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
