@@ -170,6 +170,35 @@ docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
 
 CI runs both suites on every pull request (`.github/workflows/ci.yml`).
 
+#### Real-LLM smoke tests (local model, no API keys)
+
+The fake-LLM suite verifies the pipeline deterministically but not real model
+behavior (prompt quality, tool selection). To check that end-to-end against a
+real model **without spending API credits**, run the smoke suite against a local
+[Ollama](https://ollama.com) model. On macOS the agents connect to the host's
+Metal-accelerated Ollama (a containerized Ollama gets no GPU under colima):
+
+```bash
+ollama pull llama3.1:8b         # ~4.9GB, runs on 16GB RAM
+./scripts/smoke_local_llm.sh    # boots the stack + runs the smoke tests
+```
+
+`llama3.1:8b` is the default because it reliably emits **structured** tool calls
+even when the agent exposes many tools at once, and it has no "thinking" phase so
+turns stay under the 120s per-turn timeout. Model choice here is about
+tool-calling reliability, not size or recency:
+
+| Model | Result |
+|-------|--------|
+| `llama3.1:8b` | ✅ all 4 tests pass (~2m43s) — **default** |
+| `qwen3:8b` | ⚠️ tool-calling works, but `<think>` blocks blow the 120s per-turn timeout on a 16GB M4 |
+| `qwen3.5` (4b/9b) | ❌ emits tool calls as raw JSON *text* under a multi-tool prompt → breaks the ReAct loop, any size |
+
+Override the model with `LOCAL_OLLAMA_MODEL=mistral-nemo ./scripts/smoke_local_llm.sh`,
+or `--keep` to leave the stack up. These tests are tolerant of a local model's
+non-determinism — they assert the pipeline reaches a sane outcome, not exact
+wording. They are gated behind `DAK_SMOKE_REAL_LLM=1` and are not part of CI.
+
 ## Environment Configuration
 
 Key environment variables (see `.env.example` for full list):
