@@ -39,6 +39,11 @@ docker compose up --build -d
 # MCP Server:   http://localhost:8001
 ```
 
+For a guided walkthrough that boots the stack and verifies **each feature**
+(basic chat, skill discovery + MCP tools, Enforcer mode, AP2 mock payment) from
+both the **UI and the CLI** — including a no-API-key local-LLM path — see
+**[docs/quickstart.md](docs/quickstart.md)**.
+
 ## Architecture
 
 ```
@@ -198,6 +203,14 @@ Override the model with `LOCAL_OLLAMA_MODEL=mistral-nemo ./scripts/smoke_local_l
 or `--keep` to leave the stack up. These tests are tolerant of a local model's
 non-determinism — they assert the pipeline reaches a sane outcome, not exact
 wording. They are gated behind `DAK_SMOKE_REAL_LLM=1` and are not part of CI.
+
+The UI is also covered by a real browser E2E (Playwright/Chromium) that types
+into the HTMX chat, asserts the rendered DOM, and saves screenshots:
+
+```bash
+cd tests/integration && uv run playwright install chromium   # once
+DAK_SMOKE_REAL_LLM=1 uv run pytest test_bff_ui.py            # against the running local-llm stack
+```
 
 ## Environment Configuration
 
