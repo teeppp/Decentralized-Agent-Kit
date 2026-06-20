@@ -67,8 +67,9 @@ The user asks: "Check the database status and then restart the service if needed
     }
     ```
 2.  **System Enforces Pact**:
-    - The `SessionState` is updated.
+    - The allowed-tools list is stored in the ADK session state, so each session has its own independent pact (persisted across restarts with the PostgreSQL session service).
     - If the agent tries to call `delete_database` (not in `allowed_tools`), the system **BLOCKS** the action and returns a "Violation" error.
+    - Core tools (`planner`, `ask_question`, `attempt_answer`, `switch_mode`, `list_skills`, `enable_skill`, `transfer_to_agent`) are always allowed, so the agent can re-plan and discover capabilities without deadlocking.
     - The agent must then stick to its plan or call `planner` again to update it.
 
 ### 3. ReAct Loop

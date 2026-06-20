@@ -127,31 +127,6 @@ class TestMCPTools(unittest.IsolatedAsyncioTestCase):
             result = await main.search_files("*.py", "/test")
             self.assertIn("Error searching files", result)
 
-    async def test_planner(self):
-        """Test planner formats plan correctly."""
-        task = "Implement new feature"
-        steps = ["Step 1", "Step 2", "Step 3"]
-        complexity = "moderate"
-        
-        result = await main.planner(task, steps, complexity)
-        
-        self.assertIn(task, result)
-        self.assertIn(complexity, result)
-        self.assertIn("1. Step 1", result)
-        self.assertIn("2. Step 2", result)
-        self.assertIn("3. Step 3", result)
-
-    async def test_planner_complex(self):
-        """Test planner with complex task."""
-        task = "Build distributed system"
-        steps = ["Design architecture", "Implement core", "Add monitoring", "Deploy"]
-        complexity = "complex"
-        
-        result = await main.planner(task, steps, complexity)
-        
-        self.assertIn("complex", result)
-        self.assertEqual(len([line for line in result.split('\n') if line.strip().startswith(tuple('1234'))]), 4)
-
 
 if __name__ == '__main__':
     unittest.main()

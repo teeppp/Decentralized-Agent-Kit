@@ -126,6 +126,14 @@ class SkillRegistry:
     def get_skill(self, skill_name: str) -> Optional[Dict[str, Any]]:
         return self.skills.get(skill_name)
 
+    def find_skill_dir(self, skill_name: str) -> Optional[str]:
+        """Locate the directory of a skill across all configured skills dirs."""
+        for skills_dir in self.skills_dirs:
+            candidate = os.path.join(skills_dir, skill_name)
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
     def list_skills(self) -> List[Dict[str, str]]:
         """Return a list of available skills (metadata only)."""
         return [

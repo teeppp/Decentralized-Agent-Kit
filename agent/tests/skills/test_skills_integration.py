@@ -1,7 +1,7 @@
 import pytest
 import os
 import sys
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 
 # Add agent directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
@@ -9,7 +9,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
 from dak_agent.skill_registry import SkillRegistry
 from google.adk.models import BaseLlm
 from google.adk.models.llm_response import LlmResponse
-from google.adk.tools import FunctionTool
+
 
 # Mock McpToolset
 class MockMcpToolset:
@@ -17,7 +17,7 @@ class MockMcpToolset:
         self.tool_filter = tool_filter
         self.name = "MockMcpToolset"
         self._tools = []
-    
+
     async def get_tools(self):
         # Return mock tools
         mock_tool = MagicMock()
@@ -25,38 +25,41 @@ class MockMcpToolset:
         mock_tool.description = "Description 1"
         return [mock_tool]
 
+
 class MockModel(BaseLlm):
     model: str = "gemini-2.5-flash"
-    
+
     def prompt(self, prompt: str, **kwargs) -> LlmResponse:
         return LlmResponse(content="mock response")
-        
+
     async def generate_content_async(self, prompt: str, **kwargs) -> LlmResponse:
         return LlmResponse(content="mock response")
 
+
 @pytest.fixture
 def mock_agent():
-    with patch('google.adk.tools.mcp_tool.McpToolset', MockMcpToolset), \
-         patch('dak_agent.adaptive_agent.McpToolset', MockMcpToolset), \
-         patch('dak_agent.adaptive_agent.genai.Client') as MockGenAI:
-        
+    # Remote-tool discovery (list_skills) and skill toolsets (enable_skill)
+    # both go through McpToolset, in remote_tools and skill_tools respectively.
+    with patch('dak_agent.remote_tools.McpToolset', MockMcpToolset), \
+         patch('dak_agent.skill_tools.McpToolset', MockMcpToolset):
+
         from dak_agent.adaptive_agent import AdaptiveAgent
-        
-        mock_model = MockModel()
-        
+
         agent = AdaptiveAgent(
-            model=mock_model,
+            model=MockModel(),
             name="TestAgent",
             instruction="System Prompt",
             tools=[],
             mcp_url="http://mock-mcp"
         )
-        
+
         # Mock skill registry
         agent.skill_registry = MagicMock(spec=SkillRegistry)
-        # Add skills_dirs attribute (list instead of single dir)
         agent.skill_registry.skills_dirs = ["/tmp/mock_skills"]
-        
+        agent.skill_registry.find_skill_dir.side_effect = (
+            lambda name: f"/tmp/mock_skills/{name}" if name == 'filesystem' else None
+        )
+
         agent.skill_registry.list_skills.return_value = [
             {'name': 'filesystem', 'description': 'Manage files and directories'}
         ]
@@ -69,74 +72,67 @@ def mock_agent():
 
         yield agent
 
+
+def get_tool_func(agent, tool_name):
+    tool = next(t for t in agent.tools if getattr(t, 'name', '') == tool_name)
+    return getattr(tool, 'fn', getattr(tool, 'func', None))
+
+
 @pytest.mark.asyncio
 async def test_list_skills(mock_agent):
-    list_skills_tool = next(t for t in mock_agent.tools if t.name == 'list_skills')
-    
-    func = getattr(list_skills_tool, 'fn', getattr(list_skills_tool, 'func', None))
-    if not func:
-        func = list_skills_tool._fn
-        
+    func = get_tool_func(mock_agent, 'list_skills')
     result = await func()
-    
+
     assert "filesystem" in result
     assert "Manage files and directories" in result
 
+
 @pytest.mark.asyncio
 async def test_enable_skill(mock_agent):
-    enable_skill_tool = next(t for t in mock_agent.tools if t.name == 'enable_skill')
-    func = getattr(enable_skill_tool, 'fn', getattr(enable_skill_tool, 'func', None))
-    
-    # Mock os.path.exists to return True for skill dir, False for tools.py
-    def mock_exists(path):
-        # Return True for skill directories, False for tools.py
-        if path.endswith("tools.py"):
-            return False
-        return True  # Skill directory exists
-    
-    with patch('dak_agent.adaptive_agent.os.path.exists', side_effect=mock_exists):
+    func = get_tool_func(mock_agent, 'enable_skill')
+
+    # Skill has no local tools.py, so all tools fall back to MCP
+    with patch('dak_agent.skill_tools.os.path.exists', return_value=False):
         result = await func(skill_name="filesystem")
-    
+
     assert "'filesystem' enabled." in result
     assert "# Skill: filesystem" in mock_agent.instruction
-    
+
     # Verify toolset added
     mcp_toolsets = [t for t in mock_agent.tools if getattr(t, 'name', '') == 'MockMcpToolset']
     assert len(mcp_toolsets) > 0
     assert set(mcp_toolsets[-1].tool_filter) == {'read_file', 'list_files'}
 
+
 @pytest.mark.asyncio
 async def test_enable_nonexistent_skill(mock_agent):
-    enable_skill_tool = next(t for t in mock_agent.tools if t.name == 'enable_skill')
-    func = getattr(enable_skill_tool, 'fn', getattr(enable_skill_tool, 'func', None))
-    
+    func = get_tool_func(mock_agent, 'enable_skill')
+
     result = await func(skill_name="fake-skill")
-    
+
     assert "Error" in result
     assert "not found" in result
+
 
 @pytest.mark.asyncio
 async def test_zero_config_discovery(mock_agent):
     # 1. List Skills (triggers lazy load)
-    list_skills_tool = next(t for t in mock_agent.tools if t.name == 'list_skills')
-    func_list = getattr(list_skills_tool, 'fn', getattr(list_skills_tool, 'func', None))
-    
+    func_list = get_tool_func(mock_agent, 'list_skills')
+
     result = await func_list()
-    
+
     # Verify remote tools are listed (MockMcpToolset returns remote_tool_1)
     assert "Individual Remote Tools" in result
     assert "remote_tool_1" in result
-    
+
     # 2. Enable Remote Tool
-    enable_skill_tool = next(t for t in mock_agent.tools if t.name == 'enable_skill')
-    func_enable = getattr(enable_skill_tool, 'fn', getattr(enable_skill_tool, 'func', None))
-    
+    func_enable = get_tool_func(mock_agent, 'enable_skill')
+
     result = await func_enable(skill_name="remote_tool_1")
-    
+
     assert "'remote_tool_1' enabled." in result
     assert "# Tool Enabled: remote_tool_1" in mock_agent.instruction
-    
+
     # Verify toolset added with filter
     mcp_toolsets = [t for t in mock_agent.tools if getattr(t, 'name', '') == 'MockMcpToolset']
-    # The last one should be the one for remote_tool_1
     assert mcp_toolsets[-1].tool_filter == ['remote_tool_1']

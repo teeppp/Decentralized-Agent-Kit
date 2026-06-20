@@ -1,6 +1,8 @@
 import logging
-import os
 from typing import List, Tuple, Any, Optional
+
+from . import meta_llm
+from .config import get_litellm_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +31,11 @@ class ModeManager:
     
     def __init__(self, model_name: str = "gemini-2.5-flash"):
         self.model_name = model_name
+        # The model name may carry a LiteLLM provider prefix (e.g. "gemini/gemini-2.5-flash");
+        # strip it for the context-window lookup.
+        bare_model_name = model_name.rsplit("/", 1)[-1]
         self.max_context_tokens = self.MODEL_MAX_TOKENS.get(
-            model_name, 
+            bare_model_name,
             self.MODEL_MAX_TOKENS["default"]
         )
         self.token_threshold = 0.5  # 50% threshold
@@ -79,23 +84,21 @@ class ModeManager:
         self._switch_requested = False
 
     def generate_mode_config(
-        self, 
-        history_summary: str, 
+        self,
+        history_summary: str,
         available_tools: List[Any],
         available_skills: List[dict],
-        model_client: Any,
         requested_focus: Optional[str] = None
     ) -> Tuple[str, List[Any], List[str]]:
         """
         Generates a new mode configuration (Instruction, Tools, Skills) using a Meta-LLM call.
-        
+
         Args:
             history_summary: A summary of the conversation so far.
             available_tools: The full list of tools available to the agent.
             available_skills: The list of available skills (metadata).
-            model_client: The LLM client to use for the Meta-Agent call.
             requested_focus: If LLM requested a specific focus via switch_mode.
-            
+
         Returns:
             Tuple[str, List[Any], List[str]]: (New System Instruction, List of Selected Tools, List of Selected Skills)
         """
@@ -167,40 +170,28 @@ You must output a JSON object with this structure:
 }}
 """
 
-        # Log instead of print
         logger.debug("--- META-AGENT PROMPT ---")
         logger.debug(meta_prompt)
         logger.debug("-------------------------")
 
         try:
-            # Call the Meta-Agent (LLM) using the provided client
-            response = model_client.models.generate_content(
-                model=self.model_name,
-                contents=meta_prompt,
-                config={
-                    'response_mime_type': 'application/json'
-                }
-            )
-            
-            if not response.text:
-                logger.warning("Meta-Agent returned empty response. Keeping current configuration.")
+            # The Meta-Agent uses the same provider as the main model (via LiteLLM)
+            config_data = meta_llm.complete_json(get_litellm_model_name(self.model_name), meta_prompt)
+
+            if not config_data:
+                logger.warning("Meta-Agent returned no config. Keeping current configuration.")
                 return "Continue with current task.", [], []
 
-            # Parse JSON response
-            import json
-            config_data = json.loads(response.text)
-            
             new_instruction = config_data.get("instruction", "Continue with current task.")
             selected_tool_names = config_data.get("selected_tools", [])
             selected_skills = config_data.get("selected_skills", [])
-            
+
             logger.info(f"Meta-Agent selected tools: {selected_tool_names}")
             logger.info(f"Meta-Agent selected skills: {selected_skills}")
-            
-            # Return instruction, list of selected tool names, and selected skills
+
             return new_instruction, selected_tool_names, selected_skills
 
         except Exception as e:
             logger.error(f"Meta-Agent failed: {e}. Reverting to default configuration.")
-            # Fallback: Return generic instruction and empty list (will use all tools)
+            # Fallback: generic instruction, no tool filtering
             return "Continue with current task.", [], []

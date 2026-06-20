@@ -1,0 +1,17 @@
+[project]
+name = "dak-integration-tests"
+version = "0.1.0"
+description = "Docker-based integration tests for the Decentralized Agent Kit"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "httpx>=0.28.1",
+    "playwright>=1.60.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+addopts = "-ra"

@@ -1,0 +1,95 @@
+# Integration-test overrides: run the full stack against a deterministic
+# fake LLM so no API keys are needed.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build --wait
+#   cd tests/integration && uv run pytest
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
+
+services:
+  fake-llm:
+    build: ./tests/integration/fake_llm
+    ports:
+      - "8089:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  agent:
+    environment:
+      - MODEL_NAME=openai/fake-default
+      - OPENAI_API_BASE=http://fake-llm:8080/v1
+      - OPENAI_API_KEY=dummy
+    depends_on:
+      - postgres
+      - fake-llm
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/list-apps')"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  agent-enforcer:
+    build: ./agent
+    ports:
+      - "8010:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://username:password@postgres:5432/postgres
+      - MCP_SERVER_URL=http://mcp-server:8000/mcp
+      - MODEL_NAME=openai/fake-enforcer
+      - OPENAI_API_BASE=http://fake-llm:8080/v1
+      - OPENAI_API_KEY=dummy
+      - ENABLE_ENFORCER_MODE=true
+    depends_on:
+      - postgres
+      - fake-llm
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/list-apps')"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  agent-ap2:
+    build: ./agent
+    ports:
+      - "8011:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://username:password@postgres:5432/postgres
+      - MCP_SERVER_URL=http://mcp-server:8000/mcp
+      - MODEL_NAME=openai/fake-ap2
+      - OPENAI_API_BASE=http://fake-llm:8080/v1
+      - OPENAI_API_KEY=dummy
+      - ENABLE_AP2_PROTOCOL=true
+      - SOLANA_USE_MOCK=true
+      - AGENT_SKILLS_DIRS=/app/skills:/app/provider_skills
+    depends_on:
+      - postgres
+      - fake-llm
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/list-apps')"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+
+  mcp-server:
+    healthcheck:
+      # GET /mcp answers 4xx without a proper MCP handshake; any HTTP response means the server is up
+      test: ["CMD", "python", "-c", "import urllib.request, urllib.error\ntry:\n    urllib.request.urlopen('http://localhost:8000/mcp')\nexcept urllib.error.HTTPError:\n    pass"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  bff:
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s

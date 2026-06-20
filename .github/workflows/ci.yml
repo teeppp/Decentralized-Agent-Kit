@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [agent, cli, mcp-server, bff]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "${{ matrix.component }}/uv.lock"
+      - name: Install dependencies
+        working-directory: ${{ matrix.component }}
+        run: uv sync
+      - name: Run unit tests
+        working-directory: ${{ matrix.component }}
+        run: uv run pytest -q
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Create empty .env for compose
+        run: touch .env
+      - name: Build and start the stack (fake LLM, no API keys)
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.test.yml build
+          docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --wait
+      - name: Run integration tests
+        working-directory: tests/integration
+        run: |
+          uv sync
+          uv run pytest -q
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml logs --no-color > compose-logs.txt
+      - name: Upload logs artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs
+          path: compose-logs.txt
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml down -v

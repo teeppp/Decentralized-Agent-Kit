@@ -26,3 +26,8 @@ dev = [
     "pytest>=8.4.2",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "integration: tests that require a running agent (set DAK_AGENT_URL)",
+]
+

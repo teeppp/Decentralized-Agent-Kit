@@ -26,7 +26,7 @@ async def test_list_skills_integration():
     mock_tools_list = [mock_tool1, mock_tool2]
     
     # Patch McpToolset inside adaptive_agent.py
-    with patch("dak_agent.adaptive_agent.McpToolset") as MockMcpToolset:
+    with patch("dak_agent.remote_tools.McpToolset") as MockMcpToolset:
         # Configure the mock to return our tools
         mock_toolset_instance = MockMcpToolset.return_value
         
@@ -64,7 +64,7 @@ async def test_list_skills_integration():
 @pytest.mark.asyncio
 async def test_list_skills_empty():
     """Test handling of empty tool list."""
-    with patch("dak_agent.adaptive_agent.McpToolset") as MockMcpToolset:
+    with patch("dak_agent.remote_tools.McpToolset") as MockMcpToolset:
         mock_toolset_instance = MockMcpToolset.return_value
         
         future = asyncio.Future()
@@ -93,7 +93,7 @@ async def test_list_skills_empty():
 @pytest.mark.asyncio
 async def test_list_skills_error():
     """Test handling of connection error."""
-    with patch("dak_agent.adaptive_agent.McpToolset") as MockMcpToolset:
+    with patch("dak_agent.remote_tools.McpToolset") as MockMcpToolset:
         mock_toolset_instance = MockMcpToolset.return_value
         # get_tools is called in _ensure_remote_tools_loaded
         mock_toolset_instance.get_tools.side_effect = Exception("Connection refused")

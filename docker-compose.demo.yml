@@ -9,8 +9,6 @@ services:
       - ENABLE_AP2_PROTOCOL=true
       - ENABLE_A2A_CONSUMER=true
       - ENABLE_ENFORCER_MODE=false
-      - SYMBOL_USE_MOCK=true
-      - SYMBOL_PRIVATE_KEY=0000000000000000000000000000000000000000000000000000000000000000
       - SOLANA_USE_MOCK=true
       - SOLANA_NETWORK=devnet
       - AGENT_NAME=dak_agent
@@ -20,7 +18,6 @@ services:
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
       - LANGFUSE_HOST=${LANGFUSE_BASE_URL}
-      - PYTHONPATH=/app/dak_agent
     depends_on:
       - mcp-server
     ports:
@@ -34,8 +31,8 @@ services:
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - ENABLE_AP2_PROTOCOL=true
-      - SYMBOL_USE_MOCK=true
-      - SYMBOL_PRIVATE_KEY=1111111111111111111111111111111111111111111111111111111111111111
+      - SOLANA_USE_MOCK=true
+      - AGENT_SKILLS_DIRS=/app/skills:/app/provider_skills
       - AGENT_NAME=dak_agent
       - AGENT_PUBLIC_URL=http://agent-provider:8000/a2a/dak_agent
       - AGENT_INSTRUCTION="You are a Provider Agent. You sell premium analysis. Use 'premium_service' skill."

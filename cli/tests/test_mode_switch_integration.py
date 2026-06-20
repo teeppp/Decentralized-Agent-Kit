@@ -15,10 +15,15 @@ except ImportError:
     print(sys.path)
     raise
 
+@pytest.mark.integration
+@pytest.mark.skipif(
+    not os.getenv("DAK_AGENT_URL"),
+    reason="integration test: set DAK_AGENT_URL to a running agent to enable",
+)
 def test_mode_switch_integration():
     """
     Integration test to verify mode switching.
-    Requires the agent to be running at localhost:8000.
+    Requires a running agent (set DAK_AGENT_URL, e.g. http://localhost:8000).
     """
     # Ensure user is logged in
     cm = ConfigManager()

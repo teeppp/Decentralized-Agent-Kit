@@ -61,6 +61,9 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# SQLite databases (e.g. plugin/experiment local stores)
+*.db
+
 # Flask stuff:
 instance/
 .webassets-cache
@@ -207,3 +210,5 @@ marimo/_lsp/
 __marimo__/
 
 node_modules
+# UI E2E screenshots (Playwright)
+tests/integration/artifacts/
