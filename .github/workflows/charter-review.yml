@@ -1,0 +1,40 @@
+name: Charter review
+
+# 四半期: 目的憲章(docs/CHARTER.md)そのものを見直す Issue を起票する（要件4の「目的の定期見直し」）。
+# 初期の目的に縛られないよう、landscape の変化を踏まえてスコープ・基準の改訂案を提示する。
+#
+# 前提: ANTHROPIC_API_KEY を Actions secrets に登録。
+on:
+  schedule:
+    - cron: "0 7 1 1,4,7,10 *" # 1/4/7/10 月の 1 日 07:00 UTC（四半期）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  charter-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Propose charter revisions
+        uses: anthropic/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--allowedTools Bash(gh issue list:*),Bash(gh issue create:*),Read,WebSearch"
+          prompt: |
+            あなたは Decentralized-Agent-Kit の憲章レビュー担当です。四半期レビューを行います。
+
+            手順:
+            1. `docs/CHARTER.md` と `README.md`、`AGENTS.md` を Read する。
+            2. WebSearch で、エージェント基盤/A2A/MCP/マルチLLM/エージェント安全性の領域における
+               この四半期の主要な変化（新仕様、台頭したフレームワーク、デファクトの移動）を調べる。
+            3. `gh issue list --label charter --state open` で既存のレビュー Issue が無いか確認（あれば起票しない）。
+            4. 無ければ「Charter review <YYYY-Qn>」という 1 件の Issue を `gh issue create` で起票:
+               - ラベル: `charter`
+               - 本文: (a) この四半期の landscape 変化の要約 /
+                       (b) 現行 CHARTER.md のスコープ内ドメイン・スコープ外・採用基準への**具体的な改訂提案**（差分の形で）/
+                       (c) 新たにウォッチすべき/外すべきドメインの提案
+            5. 提案は憲章の設計原則（System enables/Agent decides 等）を尊重すること。

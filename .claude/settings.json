@@ -1,0 +1,26 @@
+{
+  "$comment": "Project-shared Claude Code settings. Personal overrides go in settings.local.json (gitignored). Allowlist covers common read-only/dev commands to reduce permission prompts.",
+  "permissions": {
+    "allow": [
+      "Bash(uv sync:*)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv run dak-maint:*)",
+      "Bash(uv lock:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker logs:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh project list:*)",
+      "Bash(gh project item-list:*)",
+      "Bash(gh label list:*)"
+    ]
+  }
+}

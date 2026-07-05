@@ -1,0 +1,49 @@
+name: バグ報告 (Bug report)
+description: 想定と異なる動作を報告する
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 何が起きたか / What happened
+      description: 実際の挙動と、期待した挙動。
+      placeholder: |
+        実際: ...
+        期待: ...
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影響コンポーネント / Affected component
+      multiple: true
+      options:
+        - agent
+        - mcp-server
+        - bff
+        - cli
+        - tests/integration
+        - docs / infra
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 再現手順 / Steps to reproduce
+      description: できれば `docker compose ...` や `uv run pytest ...` などの具体コマンドで。
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: 使用モデル / MODEL_NAME
+      description: 例 `gemini-2.5-flash`, `ollama_chat/llama3.1:8b`, `openai/fake-default`
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ / Logs
+      render: shell
+    validations:
+      required: false

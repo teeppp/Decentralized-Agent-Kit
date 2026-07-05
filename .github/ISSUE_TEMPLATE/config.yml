@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 質問・議論 (Questions & Discussion)
+    url: https://github.com/teeppp/Decentralized-Agent-Kit/discussions
+    about: バグや機能要望ではない質問・アイデアの相談はこちら。
+  - name: セキュリティ脆弱性の報告 (Security)
+    url: https://github.com/teeppp/Decentralized-Agent-Kit/security/advisories/new
+    about: 脆弱性は公開Issueではなく Security Advisory から非公開で報告してください。

@@ -1,0 +1,23 @@
+name: Add to Project
+
+# 新規 Issue / PR を自動で GitHub Project に追加する。
+# すべての作業を Project 上で一元管理するための土台（要件1）。
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/add-to-project@v1.0.2
+        with:
+          # bootstrap_project.sh が出力する Project URL を Variables に登録して使う。
+          # 例: gh variable set DAK_PROJECT_URL --body "https://github.com/users/teeppp/projects/N"
+          project-url: ${{ vars.DAK_PROJECT_URL }}
+          github-token: ${{ secrets.DAK_PROJECT_TOKEN }}

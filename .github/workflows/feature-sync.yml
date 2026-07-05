@@ -1,0 +1,45 @@
+name: Feature sync
+
+# 週次: 最近更新された依存の release notes から「修正」ではなく「新機能」を抽出し、
+# DAK に取り込む価値があれば feature-sync Issue を起票する（要件3, Tier2=Claude）。
+#
+# 前提: ANTHROPIC_API_KEY を Actions secrets に登録。
+# ノイズ抑制: 1 実行あたり最大 2 件、既存 Open Issue と重複しないもののみ起票するよう
+# プロンプトで制約する。
+on:
+  schedule:
+    - cron: "0 6 * * 1" # 毎週月曜 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  feature-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Analyze dependency updates and propose adoptions
+        uses: anthropic/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--allowedTools Bash(git log:*),Bash(gh issue list:*),Bash(gh issue create:*),WebFetch,WebSearch"
+          prompt: |
+            あなたは Decentralized-Agent-Kit の保守エンジニアです。
+            目的: 依存ライブラリの「新機能」を DAK に取り込む提案を Issue 化する（バグ修正は対象外）。
+
+            手順:
+            1. `git log --since="2 weeks ago" --grep="deps(" --oneline` で最近マージされた依存更新を確認。
+            2. 主要な更新（例: litellm, google-adk, mcp, fastapi, a2a-sdk）について、
+               WebFetch/WebSearch で更新差分の release notes を調べ、DAK に有用な**新機能**を特定する。
+            3. `docs/CHARTER.md`（あれば）と README のスコープに照らして取り込み価値を判断する。
+            4. `gh issue list --label feature-sync --state open` で既存提案と重複しないか確認。
+            5. 価値があり重複しないものだけ、**最大2件**、`gh issue create` で起票する:
+               - ラベル: `feature-sync`
+               - タイトル: `Adopt <新機能> in <dep> v<version>`
+               - 本文: 新機能の要約 / 対象コンポーネント(agent,mcp-server,bff,cli) / 導入スケッチ / 参照リンク
+            6. 起票が0件でも問題ない。無理に作らないこと。

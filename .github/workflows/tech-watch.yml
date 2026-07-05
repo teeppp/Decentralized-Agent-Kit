@@ -1,0 +1,42 @@
+name: Tech watch
+
+# 隔週: 憲章(docs/CHARTER.md)を判断軸に、スコープ内ドメインの新ライブラリ/仕様/手法を
+# 探索し、採用基準を満たすものだけ提案 Issue を起票する（要件4, Tier2=Claude）。
+#
+# 前提: ANTHROPIC_API_KEY を Actions secrets に登録。
+# ノイズ抑制: 1 実行あたり最大2件、既存の Open Issue と重複しないものだけ。
+on:
+  schedule:
+    - cron: "0 6 1,15 * *" # 毎月 1 日・15 日 06:00 UTC（隔週相当）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  tech-watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Watch for charter-aligned technologies
+        uses: anthropic/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: "--allowedTools Bash(gh issue list:*),Bash(gh issue create:*),Read,WebFetch,WebSearch"
+          prompt: |
+            あなたは Decentralized-Agent-Kit の技術ウォッチ担当です。
+
+            手順:
+            1. `docs/CHARTER.md` を Read し、Mission / 設計原則 / スコープ内ドメイン /
+               スコープ外 / 採用基準を把握する（これが唯一の判断軸）。
+            2. スコープ内ドメイン（エージェント基盤/A2A/MCP/マルチLLM/安全性/観測性/決済）に関して、
+               WebSearch/WebFetch で**最近登場・更新された**ライブラリ・仕様・手法を調べる。
+            3. 各候補を CHARTER.md の「採用基準」5項目で評価する。
+            4. `gh issue list --label tech-watch --state open` で既存提案と重複しないか確認。
+            5. 採用基準を**すべて**満たし重複しないものだけ、**最大2件**、`gh issue create` で起票:
+               - ラベル: `tech-watch`
+               - タイトル: `[tech-watch] <対象> の採用検討`
+               - 本文: 対象/参照リンク/憲章適合度(どのドメイン・基準を満たすか)/導入スケッチ/見積り規模
+            6. 基準を満たすものが無ければ 0 件でよい。憲章に反するもの・単一ベンダロックインは提案しない。
