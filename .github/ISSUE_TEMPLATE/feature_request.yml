@@ -1,0 +1,38 @@
+name: 機能要望 (Feature request)
+description: 新機能・改善の提案
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい課題 / Problem
+      description: 「〜できると嬉しい」ではなく「〜が今できず困っている」の形で。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案する解決策 / Proposed solution
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 対象コンポーネント / Component
+      multiple: true
+      options:
+        - agent
+        - mcp-server
+        - bff
+        - cli
+        - tests/integration
+        - docs / infra
+    validations:
+      required: true
+  - type: textarea
+    id: charter
+    attributes:
+      label: 憲章との整合 / Alignment with CHARTER.md
+      description: docs/CHARTER.md のどのスコープ・原則に沿うか（該当すれば）。
+    validations:
+      required: false

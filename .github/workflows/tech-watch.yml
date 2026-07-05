@@ -1,0 +1,55 @@
+name: Tech watch
+
+# 隔週: 憲章(docs/CHARTER.md)を判断軸に新技術を探索し提案 Issue を起票（要件4）。
+# provider 中立: LLM は MAINT_LLM_*（Gemini/Ollama/OpenAI/… いずれでも可）で回す。
+# Web 検索は LLM と分離した Tavily API（TAVILY_API_KEY 必須。規約遵守のためスクレイピングはしない）。
+# MAINT_LLM_* または TAVILY_API_KEY 未設定なら提案 0 件（失敗しない）。
+on:
+  schedule:
+    - cron: "0 6 1,15 * *" # 毎月 1 日・15 日 06:00 UTC（隔週相当）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  tech-watch:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 実行時にプロバイダを選択（例: Gemini の OpenAI 互換エンドポイント）
+      MAINT_LLM_BASE_URL: ${{ vars.MAINT_LLM_BASE_URL }}
+      MAINT_LLM_MODEL: ${{ vars.MAINT_LLM_MODEL }}
+      MAINT_LLM_API_KEY: ${{ secrets.MAINT_LLM_API_KEY }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "maintenance/uv.lock"
+
+      - name: Generate proposals
+        working-directory: maintenance
+        run: |
+          uv sync
+          existing=$(gh issue list --label tech-watch --state open --json title --jq '[.[].title]')
+          uv run dak-maint watch \
+            --charter ../docs/CHARTER.md \
+            --existing-titles "$existing" \
+            --max-items 2 > proposals.json
+          cat proposals.json
+
+      - name: Create issues
+        working-directory: maintenance
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          for p in json.load(open("proposals.json")):
+              subprocess.run(
+                  ["gh", "issue", "create", "--title", p["title"],
+                   "--body", p["body"], "--label", ",".join(p["labels"])],
+                  check=True,
+              )
+          PY

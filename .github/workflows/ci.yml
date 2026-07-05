@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [agent, cli, mcp-server, bff]
+        component: [agent, cli, mcp-server, bff, maintenance]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

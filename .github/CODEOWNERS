@@ -1,0 +1,18 @@
+# CODEOWNERS — レビュー自動アサインとオーナーシップの雛形。
+# 将来コンポーネントごとに担当を分割する際は各行の owner を差し替える。
+# 参考: https://docs.github.com/en/repositories/managing-your-repositories-permissions-and-settings/customizing-your-repository/about-code-owners
+
+*                       @teeppp
+
+# コンポーネント別
+/agent/                 @teeppp
+/mcp-server/            @teeppp
+/bff/                   @teeppp
+/cli/                   @teeppp
+/tests/integration/    @teeppp
+/maintenance/          @teeppp
+
+# 自動化・CI・持続可能化システム（変更は特に慎重に）
+/.github/              @teeppp
+/scripts/              @teeppp
+/docs/CHARTER.md       @teeppp

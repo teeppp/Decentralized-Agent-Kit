@@ -1,0 +1,74 @@
+name: Capture golden
+
+# 実LLMスタックでプロンプトを実行し、観測したツール系列を決定論的 golden として
+# 凍結し、PR として提案する（要件6「使うほど育つテスト資産」の自動化）。
+# 手動起動。nightly-eval とは独立。
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: "golden case name"
+        required: true
+      prompt:
+        description: "prompt to send to the agent"
+        required: true
+      model:
+        description: "Ollama model"
+        default: "llama3.2:3b"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Ollama models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama
+          key: ollama-${{ github.event.inputs.model }}
+
+      - name: Install and start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          nohup ollama serve > ollama.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:11434/api/version && break || sleep 1; done
+          ollama pull "${{ github.event.inputs.model }}"
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Start stack against host Ollama
+        env:
+          LOCAL_MODEL_NAME: ollama_chat/${{ github.event.inputs.model }}
+        run: |
+          touch .env
+          docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.local-llm.yml \
+            up -d --build --wait
+
+      - name: Capture golden
+        working-directory: tests/integration
+        run: |
+          uv sync
+          uv run python tools/capture_golden.py \
+            --name "${{ github.event.inputs.name }}" \
+            --prompt "${{ github.event.inputs.prompt }}"
+
+      - name: Open PR with the new golden
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: golden/${{ github.event.inputs.name }}
+          title: "test(golden): add replay case ${{ github.event.inputs.name }}"
+          commit-message: "test(golden): capture ${{ github.event.inputs.name }}"
+          labels: eval, automation
+          body: |
+            自動生成された golden replay ケース。
+            実LLM (`${{ github.event.inputs.model }}`) で観測したツール系列を決定論テスト化しました。
+            マージ前に `tests/integration/golden/${{ github.event.inputs.name }}.json` を確認してください。
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.local-llm.yml down -v
