@@ -22,8 +22,8 @@ jobs:
       MAINT_LLM_API_KEY: ${{ secrets.MAINT_LLM_API_KEY }}
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: "maintenance/uv.lock"
