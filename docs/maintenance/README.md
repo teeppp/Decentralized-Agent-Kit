@@ -49,8 +49,10 @@
    - **triage で LLM 評価も使う場合**は上記を **Dependabot secrets/variables にも登録**
      （Dependabot PR には通常の Actions secrets が渡らないため）。未設定なら triage は
      heuristic（キーワード）評価にフォールバックし、reasoning 系は提案 0 件で失敗しない。
-   - （任意）オープンWeb検索の品質を上げるなら `gh secret set TAVILY_API_KEY`。
-     未設定でも DuckDuckGo（キー不要）にフォールバックする。
+   - **Web 検索は Tavily を使用**: `gh secret set TAVILY_API_KEY`（+ Dependabot は不要）。
+     `tech-watch` / `charter-review` は Web 検索が必須なので、未設定だと提案 0 件になる
+     （`feature-sync` は changelog ベースなので Tavily 不要）。
+     ※ 規約遵守のため DuckDuckGo 等の HTML スクレイピングは行わない。
 
 ## エスカレーション経路（依存更新）
 

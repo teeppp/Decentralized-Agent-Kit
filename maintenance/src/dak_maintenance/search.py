@@ -1,22 +1,24 @@
-"""Provider-neutral web search, decoupled from the LLM provider.
+"""Provider-neutral web search via the Tavily API, decoupled from the LLM provider.
 
-Backends (auto-selected):
-  - Tavily      if TAVILY_API_KEY is set (agent-friendly, clean JSON).
-  - DuckDuckGo  otherwise (no key, best-effort HTML scrape).
+Tavily only. We deliberately do NOT scrape DuckDuckGo/Google HTML — that violates
+their terms of service. If TAVILY_API_KEY is unset, search returns [] (so the
+pipeline simply yields no proposals) instead of falling back to scraping.
 
-This keeps "open web search" available while the LLM stays swappable
-(Gemini / Ollama / OpenAI / …) — the search key is independent of the LLM.
+The search key is independent of the LLM key, so the LLM stays swappable
+(Gemini / Ollama / OpenAI / …) while web search remains ToS-compliant.
 """
 
 from __future__ import annotations
 
-import html
+import logging
 import os
-import re
 from dataclasses import dataclass
-from typing import Callable
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+TAVILY_ENDPOINT = "https://api.tavily.com/search"
 
 
 @dataclass
@@ -26,67 +28,28 @@ class SearchResult:
     snippet: str
 
 
-def _tavily(query: str, k: int, timeout: float) -> list[SearchResult]:
-    key = os.environ["TAVILY_API_KEY"]
-    r = httpx.post(
-        "https://api.tavily.com/search",
-        json={"api_key": key, "query": query, "max_results": k, "search_depth": "basic"},
-        timeout=timeout,
-    )
-    r.raise_for_status()
-    out = []
-    for item in r.json().get("results", [])[:k]:
-        out.append(SearchResult(
+def web_search(query: str, k: int = 5, timeout: float = 15.0) -> list[SearchResult]:
+    """Search the web via Tavily. Fails soft (returns []) with no key or on error."""
+    key = os.getenv("TAVILY_API_KEY")
+    if not key:
+        logger.warning("TAVILY_API_KEY 未設定のため Web 検索をスキップ（提案は 0 件になります）。")
+        return []
+    try:
+        r = httpx.post(
+            TAVILY_ENDPOINT,
+            json={"api_key": key, "query": query, "max_results": k, "search_depth": "basic"},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        results = r.json().get("results", [])
+    except Exception as e:  # noqa: BLE001 - search failure must not crash the workflow
+        logger.warning("Tavily 検索に失敗: %s", e)
+        return []
+    return [
+        SearchResult(
             title=item.get("title", ""),
             url=item.get("url", ""),
             snippet=item.get("content", ""),
-        ))
-    return out
-
-
-_DDG_RE = re.compile(
-    r'<a[^>]*class="result__a"[^>]*href="(?P<url>[^"]+)"[^>]*>(?P<title>.*?)</a>.*?'
-    r'(?:class="result__snippet"[^>]*>(?P<snip>.*?)</a>)?',
-    re.DOTALL,
-)
-_TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _clean(text: str) -> str:
-    return html.unescape(_TAG_RE.sub("", text or "")).strip()
-
-
-def _duckduckgo(query: str, k: int, timeout: float) -> list[SearchResult]:
-    r = httpx.get(
-        "https://html.duckduckgo.com/html/",
-        params={"q": query},
-        headers={"User-Agent": "Mozilla/5.0 (compatible; DAK-tech-watch/1.0)"},
-        timeout=timeout,
-    )
-    r.raise_for_status()
-    out = []
-    for m in _DDG_RE.finditer(r.text):
-        url = html.unescape(m.group("url") or "")
-        title = _clean(m.group("title"))
-        if not url or not title:
-            continue
-        out.append(SearchResult(title=title, url=url, snippet=_clean(m.group("snip"))))
-        if len(out) >= k:
-            break
-    return out
-
-
-def web_search(query: str, k: int = 5, timeout: float = 15.0) -> list[SearchResult]:
-    """Search the web. Fails soft (returns [] on error) so callers never crash."""
-    backend: Callable[[str, int, float], list[SearchResult]]
-    backend = _tavily if os.getenv("TAVILY_API_KEY") else _duckduckgo
-    try:
-        return backend(query, k, timeout)
-    except Exception:
-        # Fallback to DDG if Tavily failed for some reason.
-        if backend is _tavily:
-            try:
-                return _duckduckgo(query, k, timeout)
-            except Exception:
-                return []
-        return []
+        )
+        for item in results[:k]
+    ]

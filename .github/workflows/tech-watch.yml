@@ -2,8 +2,8 @@ name: Tech watch
 
 # 隔週: 憲章(docs/CHARTER.md)を判断軸に新技術を探索し提案 Issue を起票（要件4）。
 # provider 中立: LLM は MAINT_LLM_*（Gemini/Ollama/OpenAI/… いずれでも可）で回す。
-# Web 検索は LLM と分離（TAVILY_API_KEY があれば Tavily、無ければ DuckDuckGo）。
-# MAINT_LLM_* 未設定なら提案 0 件（失敗しない）。
+# Web 検索は LLM と分離した Tavily API（TAVILY_API_KEY 必須。規約遵守のためスクレイピングはしない）。
+# MAINT_LLM_* または TAVILY_API_KEY 未設定なら提案 0 件（失敗しない）。
 on:
   schedule:
     - cron: "0 6 1,15 * *" # 毎月 1 日・15 日 06:00 UTC（隔週相当）

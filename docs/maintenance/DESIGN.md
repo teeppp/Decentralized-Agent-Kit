@@ -30,10 +30,12 @@
 本 repo は Gemini 既定＆ LiteLLM でマルチ LLM 中立という思想。そこで **ベンダ非依存**に作り直した。
 すべての主要プロバイダは OpenAI 互換 `/chat/completions` を持つため、httpx 一本（litellm 不要）で
 `MAINT_LLM_BASE_URL/MODEL/API_KEY` を切り替えるだけでプロバイダを選べる。Web 検索は LLM と分離し、
-`TAVILY_API_KEY` があれば Tavily、無ければ DuckDuckGo（キー不要）にフォールバックする。
+**Tavily API**（`TAVILY_API_KEY`）を使う。規約遵守のため検索エンジンの HTML スクレイピングは行わず、
+キー未設定時は検索結果 0 件＝提案 0 件（失敗しない）。
 
 この階層は要件2（「repo 自身の機能で」= ドッグフード）と要件6（「Ollama 軽量テスト」）の
-両方を同時に満たす。**tech-watch を Ollama `llama3.1:8b` + DuckDuckGo で実機検証済み**（API キー不要で提案生成）。
+両方を同時に満たす。**tech-watch のパイプライン（LLM 生成→検索→LLM 評価）は Ollama `llama3.1:8b` で
+プロバイダ中立に動作することを実機確認済み**（LLM はキー不要、Web 検索は Tavily キーが必要）。
 
 ## 3. コンポーネント構成
 
@@ -110,7 +112,7 @@ Dependabot PR
 ### 5-2. 新技術ウォッチと目的の見直し（要件4）
 
 - `tech-watch`（隔週）: `dak-maint watch` が (1) LLM で憲章から検索クエリ生成 →
-  (2) Web 検索（Tavily/DuckDuckGo）で候補収集 → (3) LLM で憲章の採用基準に照らし評価 →
+  (2) Web 検索（Tavily）で候補収集 → (3) LLM で憲章の採用基準に照らし評価 →
   基準を満たすものだけ `tech-watch` Issue 化（重複検出・件数上限つき）。LLM は provider 中立。
 - `charter-review`（四半期）: landscape 変化を踏まえ憲章そのものの改訂案 Issue を起票。
   → **初期の目的に縛られず、目的自体を定期的に更新**する（要件4後段）。
@@ -152,7 +154,8 @@ fake-LLM がモデル名ごとに応答をスクリプトできること（`/scr
    と `MAINT_LLM_API_KEY`（secret）を設定。Gemini なら既存 `GOOGLE_API_KEY` を流用（プリセットは README 参照）。
    triage で LLM 評価も使うなら **Dependabot secrets/variables にも**登録。未設定でも
    reasoning 系は提案 0 件・triage は heuristic で失敗しない。
-5. （任意）オープンWeb検索を強化するなら `TAVILY_API_KEY` を登録（無ければ DuckDuckGo）。
+5. **Web 検索**: `TAVILY_API_KEY` を登録（`tech-watch`/`charter-review` に必須。未登録だと提案 0 件）。
+   規約遵守のため HTML スクレイピングのフォールバックは持たない。
 
 ## 8. 設計上のトレードオフ・既知の制約
 

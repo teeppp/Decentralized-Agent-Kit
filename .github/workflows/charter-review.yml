@@ -1,8 +1,8 @@
 name: Charter review
 
 # 四半期: 目的憲章(docs/CHARTER.md)そのものを見直す Issue を起票（要件4の「目的の定期見直し」）。
-# provider 中立（MAINT_LLM_*）+ Web 検索（任意 TAVILY_API_KEY）。
-# MAINT_LLM_* 未設定なら 0 件（失敗しない）。
+# provider 中立（MAINT_LLM_*）+ Web 検索（Tavily API, TAVILY_API_KEY）。
+# MAINT_LLM_* / TAVILY_API_KEY 未設定なら 0 件（失敗しない）。規約遵守のためスクレイピングはしない。
 on:
   schedule:
     - cron: "0 7 1 1,4,7,10 *" # 1/4/7/10 月の 1 日 07:00 UTC（四半期）

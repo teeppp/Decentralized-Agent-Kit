@@ -5,7 +5,7 @@ so it is fully unit-testable with fakes (no network, no model, no vendor lock).
 
 Flow:
   1. LLM turns the charter's in-scope domains into a few search queries.
-  2. web search gathers candidate technologies (Tavily or DuckDuckGo).
+  2. web search (Tavily) gathers candidate technologies.
   3. LLM evaluates candidates against the charter's adoption criteria -> proposals.
 """
 
