@@ -16,8 +16,8 @@ jobs:
   labeler:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: crazy-max/ghaction-github-labeler@v5
+      - uses: actions/checkout@v7
+      - uses: crazy-max/ghaction-github-labeler@v6
         with:
           yaml-file: .github/labels.yml
           # dry-run: PR段階の確認用。main では実際に反映する。
