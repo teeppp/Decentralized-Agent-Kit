@@ -1,10 +1,9 @@
 name: Tech watch
 
-# 隔週: 憲章(docs/CHARTER.md)を判断軸に、スコープ内ドメインの新ライブラリ/仕様/手法を
-# 探索し、採用基準を満たすものだけ提案 Issue を起票する（要件4, Tier2=Claude）。
-#
-# 前提: ANTHROPIC_API_KEY を Actions secrets に登録。
-# ノイズ抑制: 1 実行あたり最大2件、既存の Open Issue と重複しないものだけ。
+# 隔週: 憲章(docs/CHARTER.md)を判断軸に新技術を探索し提案 Issue を起票（要件4）。
+# provider 中立: LLM は MAINT_LLM_*（Gemini/Ollama/OpenAI/… いずれでも可）で回す。
+# Web 検索は LLM と分離（TAVILY_API_KEY があれば Tavily、無ければ DuckDuckGo）。
+# MAINT_LLM_* 未設定なら提案 0 件（失敗しない）。
 on:
   schedule:
     - cron: "0 6 1,15 * *" # 毎月 1 日・15 日 06:00 UTC（隔週相当）
@@ -17,26 +16,40 @@ permissions:
 jobs:
   tech-watch:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 実行時にプロバイダを選択（例: Gemini の OpenAI 互換エンドポイント）
+      MAINT_LLM_BASE_URL: ${{ vars.MAINT_LLM_BASE_URL }}
+      MAINT_LLM_MODEL: ${{ vars.MAINT_LLM_MODEL }}
+      MAINT_LLM_API_KEY: ${{ secrets.MAINT_LLM_API_KEY }}
+      TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Watch for charter-aligned technologies
-        uses: anthropic/claude-code-action@v1
+      - uses: astral-sh/setup-uv@v5
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: "--allowedTools Bash(gh issue list:*),Bash(gh issue create:*),Read,WebFetch,WebSearch"
-          prompt: |
-            あなたは Decentralized-Agent-Kit の技術ウォッチ担当です。
+          enable-cache: true
+          cache-dependency-glob: "maintenance/uv.lock"
 
-            手順:
-            1. `docs/CHARTER.md` を Read し、Mission / 設計原則 / スコープ内ドメイン /
-               スコープ外 / 採用基準を把握する（これが唯一の判断軸）。
-            2. スコープ内ドメイン（エージェント基盤/A2A/MCP/マルチLLM/安全性/観測性/決済）に関して、
-               WebSearch/WebFetch で**最近登場・更新された**ライブラリ・仕様・手法を調べる。
-            3. 各候補を CHARTER.md の「採用基準」5項目で評価する。
-            4. `gh issue list --label tech-watch --state open` で既存提案と重複しないか確認。
-            5. 採用基準を**すべて**満たし重複しないものだけ、**最大2件**、`gh issue create` で起票:
-               - ラベル: `tech-watch`
-               - タイトル: `[tech-watch] <対象> の採用検討`
-               - 本文: 対象/参照リンク/憲章適合度(どのドメイン・基準を満たすか)/導入スケッチ/見積り規模
-            6. 基準を満たすものが無ければ 0 件でよい。憲章に反するもの・単一ベンダロックインは提案しない。
+      - name: Generate proposals
+        working-directory: maintenance
+        run: |
+          uv sync
+          existing=$(gh issue list --label tech-watch --state open --json title --jq '[.[].title]')
+          uv run dak-maint watch \
+            --charter ../docs/CHARTER.md \
+            --existing-titles "$existing" \
+            --max-items 2 > proposals.json
+          cat proposals.json
+
+      - name: Create issues
+        working-directory: maintenance
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          for p in json.load(open("proposals.json")):
+              subprocess.run(
+                  ["gh", "issue", "create", "--title", p["title"],
+                   "--body", p["body"], "--label", ",".join(p["labels"])],
+                  check=True,
+              )
+          PY

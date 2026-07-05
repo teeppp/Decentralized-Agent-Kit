@@ -24,10 +24,16 @@
 |------|--------|-----------|--------|
 | **0** | 決定論ルール（`semver` + CI 結果） | auto-merge 可否の一次判定 | 無料・即時 |
 | **1** | Ollama 小型モデル / DAK 自エージェント | changelog リスクの一次評価、nightly eval、golden 生成 | 安価（ドッグフード） |
-| **2** | `anthropic/claude-code-action` | major/破壊的の精査、機能取り込み提案、新技術ウォッチ、憲章レビュー | 従量 |
+| **LLM（provider 中立）** | 任意プロバイダ（Gemini / Ollama / OpenAI / …）を **実行時に選択** | major/破壊的の精査、機能取り込み提案、新技術ウォッチ、憲章レビュー | 選んだプロバイダ次第（Ollama なら無料） |
 
-この階層は要件2（「repo 自身の機能で」= Tier1 のドッグフード）と要件6（「Ollama 軽量テスト」= Tier1）の
-両方を同時に満たすための構造でもある。
+**重要（設計の是正）**: reasoning 系は当初 `claude-code-action`（Anthropic 固定）にしていたが、
+本 repo は Gemini 既定＆ LiteLLM でマルチ LLM 中立という思想。そこで **ベンダ非依存**に作り直した。
+すべての主要プロバイダは OpenAI 互換 `/chat/completions` を持つため、httpx 一本（litellm 不要）で
+`MAINT_LLM_BASE_URL/MODEL/API_KEY` を切り替えるだけでプロバイダを選べる。Web 検索は LLM と分離し、
+`TAVILY_API_KEY` があれば Tavily、無ければ DuckDuckGo（キー不要）にフォールバックする。
+
+この階層は要件2（「repo 自身の機能で」= ドッグフード）と要件6（「Ollama 軽量テスト」）の
+両方を同時に満たす。**tech-watch を Ollama `llama3.1:8b` + DuckDuckGo で実機検証済み**（API キー不要で提案生成）。
 
 ## 3. コンポーネント構成
 
@@ -103,8 +109,9 @@ Dependabot PR
 
 ### 5-2. 新技術ウォッチと目的の見直し（要件4）
 
-- `tech-watch`（隔週）: `docs/CHARTER.md` の「スコープ内ドメイン」と「採用基準5項目」を判断軸に、
-  WebSearch で新技術を探索 → 基準を満たすものだけ `tech-watch` Issue 化。
+- `tech-watch`（隔週）: `dak-maint watch` が (1) LLM で憲章から検索クエリ生成 →
+  (2) Web 検索（Tavily/DuckDuckGo）で候補収集 → (3) LLM で憲章の採用基準に照らし評価 →
+  基準を満たすものだけ `tech-watch` Issue 化（重複検出・件数上限つき）。LLM は provider 中立。
 - `charter-review`（四半期）: landscape 変化を踏まえ憲章そのものの改訂案 Issue を起票。
   → **初期の目的に縛られず、目的自体を定期的に更新**する（要件4後段）。
 
@@ -141,8 +148,11 @@ fake-LLM がモデル名ごとに応答をスクリプトできること（`/scr
 1. `bash scripts/setup/bootstrap_project.sh` → `gh variable set DAK_PROJECT_URL` / `gh secret set DAK_PROJECT_TOKEN`
 2. `bash scripts/setup/seed_backlog.sh`
 3. Settings: **Allow auto-merge** ON、`main` の branch protection で CI を必須チェックに
-4. `ANTHROPIC_API_KEY`（または `CLAUDE_CODE_OAUTH_TOKEN`）を **Actions と Dependabot の両シークレットストア**に登録
-5. （任意・Tier1 LLM を使う場合）`MAINT_LLM_BASE_URL` / `MAINT_LLM_MODEL` / `MAINT_LLM_API_KEY` を設定
+4. **LLM プロバイダを選択**（provider 中立）: `MAINT_LLM_BASE_URL` / `MAINT_LLM_MODEL`（variables）
+   と `MAINT_LLM_API_KEY`（secret）を設定。Gemini なら既存 `GOOGLE_API_KEY` を流用（プリセットは README 参照）。
+   triage で LLM 評価も使うなら **Dependabot secrets/variables にも**登録。未設定でも
+   reasoning 系は提案 0 件・triage は heuristic で失敗しない。
+5. （任意）オープンWeb検索を強化するなら `TAVILY_API_KEY` を登録（無ければ DuckDuckGo）。
 
 ## 8. 設計上のトレードオフ・既知の制約
 

@@ -18,10 +18,10 @@
 | `ci.yml` | PR / push(main) | unit マトリクス + fake-LLM 統合（既存） | — |
 | `labels.yml` | `labels.yml` 変更 / 手動 | ラベル体系を宣言的に同期 | — |
 | `project-autoadd.yml` | Issue/PR open | 新規 Issue/PR を Project に自動追加 | — |
-| `dependency-triage.yml` | CI 完了(`workflow_run`) | 依存PRを判定し auto-merge or レビュー要求 | 0→2 |
-| `feature-sync.yml` | weekly cron | 依存の新機能を要約し取り込み Issue 起票 | 2 |
-| `tech-watch.yml` | 隔週 cron | 憲章に沿う新技術を探索し提案 Issue 起票 | 2 |
-| `charter-review.yml` | 四半期 cron | 憲章の見直し Issue 起票 | 2 |
+| `dependency-triage.yml` | `pull_request_target`(dependabot) | 依存PRを判定し auto-merge or レビュー要求 | 0→1 |
+| `feature-sync.yml` | weekly cron | 依存の新機能を要約し取り込み Issue 起票 | LLM(中立) |
+| `tech-watch.yml` | 隔週 cron | 憲章に沿う新技術を探索し提案 Issue 起票 | LLM(中立)+検索 |
+| `charter-review.yml` | 四半期 cron | 憲章の見直し Issue 起票 | LLM(中立)+検索 |
 | `nightly-eval.yml` | nightly cron | 小型 Ollama で実LLMスモークを実行し pass-rate 記録 | 1 |
 | `capture-golden.yml` | 手動 / nightly | 実LLMセッションを決定論テスト化して PR 提案 | 1 |
 
@@ -36,10 +36,21 @@
 4. **リポジトリ設定**:
    - Settings → General → Pull Requests → **Allow auto-merge** を ON
    - Settings → Branches → `main` の branch protection で **CI を必須チェック** に
-5. **Secrets 登録**（Tier2 用）: `ANTHROPIC_API_KEY`（または `CLAUDE_CODE_OAUTH_TOKEN`）を
-   - **Actions secrets** と
-   - **Dependabot secrets** の両方に登録
-     （Dependabot PR には通常の Actions secrets が渡らないため。`dependency-triage` は `workflow_run` 連携でこれを回避するが、Tier2 呼び出しには必要）
+5. **LLM プロバイダ設定（provider 中立・実行時選択）**: reasoning 系ワークフロー
+   （tech-watch / feature-sync / charter-review）と triage の LLM リスク評価は、以下の
+   env で任意のプロバイダを選ぶ（Gemini / Ollama / OpenAI / Anthropic すべて OpenAI 互換で叩ける）:
+   - `gh variable set MAINT_LLM_BASE_URL --body "<base url>"`
+   - `gh variable set MAINT_LLM_MODEL --body "<model id>"`
+   - `gh secret set MAINT_LLM_API_KEY --body "<api key>"`（Ollama は任意の値でOK）
+   - プリセット例:
+     - **Gemini**: `https://generativelanguage.googleapis.com/v1beta/openai` / `gemini-2.5-flash` /（`GOOGLE_API_KEY`）
+     - **Ollama**: `http://<host>:11434/v1` / `llama3.1:8b` /（任意）
+     - **OpenAI**: `https://api.openai.com/v1` / `gpt-4o-mini`
+   - **triage で LLM 評価も使う場合**は上記を **Dependabot secrets/variables にも登録**
+     （Dependabot PR には通常の Actions secrets が渡らないため）。未設定なら triage は
+     heuristic（キーワード）評価にフォールバックし、reasoning 系は提案 0 件で失敗しない。
+   - （任意）オープンWeb検索の品質を上げるなら `gh secret set TAVILY_API_KEY`。
+     未設定でも DuckDuckGo（キー不要）にフォールバックする。
 
 ## エスカレーション経路（依存更新）
 

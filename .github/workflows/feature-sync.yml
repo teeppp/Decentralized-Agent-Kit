@@ -1,11 +1,8 @@
 name: Feature sync
 
-# 週次: 最近更新された依存の release notes から「修正」ではなく「新機能」を抽出し、
-# DAK に取り込む価値があれば feature-sync Issue を起票する（要件3, Tier2=Claude）。
-#
-# 前提: ANTHROPIC_API_KEY を Actions secrets に登録。
-# ノイズ抑制: 1 実行あたり最大 2 件、既存 Open Issue と重複しないもののみ起票するよう
-# プロンプトで制約する。
+# 週次: 最近更新された依存の release notes から「新機能」を抽出し取り込み Issue を起票（要件3）。
+# provider 中立（MAINT_LLM_*）。changelog は決定論取得なので Web 検索不要。
+# MAINT_LLM_* 未設定なら提案 0 件（失敗しない）。
 on:
   schedule:
     - cron: "0 6 * * 1" # 毎週月曜 06:00 UTC
@@ -18,28 +15,57 @@ permissions:
 jobs:
   feature-sync:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      MAINT_LLM_BASE_URL: ${{ vars.MAINT_LLM_BASE_URL }}
+      MAINT_LLM_MODEL: ${{ vars.MAINT_LLM_MODEL }}
+      MAINT_LLM_API_KEY: ${{ secrets.MAINT_LLM_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Analyze dependency updates and propose adoptions
-        uses: anthropic/claude-code-action@v1
+      - uses: astral-sh/setup-uv@v5
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          claude_args: "--allowedTools Bash(git log:*),Bash(gh issue list:*),Bash(gh issue create:*),WebFetch,WebSearch"
-          prompt: |
-            あなたは Decentralized-Agent-Kit の保守エンジニアです。
-            目的: 依存ライブラリの「新機能」を DAK に取り込む提案を Issue 化する（バグ修正は対象外）。
+          enable-cache: true
+          cache-dependency-glob: "maintenance/uv.lock"
 
-            手順:
-            1. `git log --since="2 weeks ago" --grep="deps(" --oneline` で最近マージされた依存更新を確認。
-            2. 主要な更新（例: litellm, google-adk, mcp, fastapi, a2a-sdk）について、
-               WebFetch/WebSearch で更新差分の release notes を調べ、DAK に有用な**新機能**を特定する。
-            3. `docs/CHARTER.md`（あれば）と README のスコープに照らして取り込み価値を判断する。
-            4. `gh issue list --label feature-sync --state open` で既存提案と重複しないか確認。
-            5. 価値があり重複しないものだけ、**最大2件**、`gh issue create` で起票する:
-               - ラベル: `feature-sync`
-               - タイトル: `Adopt <新機能> in <dep> v<version>`
-               - 本文: 新機能の要約 / 対象コンポーネント(agent,mcp-server,bff,cli) / 導入スケッチ / 参照リンク
-            6. 起票が0件でも問題ない。無理に作らないこと。
+      - name: Collect recently updated deps
+        working-directory: maintenance
+        run: |
+          # Dependabot の既定コミット件名 "Bump <pkg> from <a> to <b>" を解析。
+          git log --since="2 weeks ago" --pretty=%s | python3 - <<'PY' > deps.json
+          import json, re, sys
+          deps, seen = [], set()
+          for line in sys.stdin:
+              m = re.search(r"[Bb]ump (\S+) from (\S+) to (\S+)", line)
+              if m and m.group(1) not in seen:
+                  seen.add(m.group(1))
+                  deps.append({"package": m.group(1), "from": m.group(2), "to": m.group(3)})
+          json.dump(deps[:10], sys.stdout)
+          PY
+          cat deps.json
+
+      - name: Generate proposals
+        working-directory: maintenance
+        run: |
+          uv sync
+          existing=$(gh issue list --label feature-sync --state open --json title --jq '[.[].title]')
+          uv run dak-maint feature-sync \
+            --deps "$(cat deps.json)" \
+            --charter ../docs/CHARTER.md \
+            --existing-titles "$existing" \
+            --max-items 2 > proposals.json
+          cat proposals.json
+
+      - name: Create issues
+        working-directory: maintenance
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          for p in json.load(open("proposals.json")):
+              subprocess.run(
+                  ["gh", "issue", "create", "--title", p["title"],
+                   "--body", p["body"], "--label", ",".join(p["labels"])],
+                  check=True,
+              )
+          PY

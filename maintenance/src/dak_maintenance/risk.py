@@ -10,11 +10,12 @@ Tests inject a fake `complete` so no network/model is needed.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Protocol
+
+from .jsonutil import extract_json
 
 
 class RiskLevel(str, Enum):
@@ -89,23 +90,6 @@ Respond with ONLY a JSON object:
 - "risky": deprecations, changed defaults, or behavior that may affect us.
 - "breaking": removed/renamed APIs or explicit breaking changes.
 """
-
-
-def extract_json(text: str) -> dict:
-    """Pull the first JSON object out of an LLM response (prose/fences tolerant)."""
-    if not text:
-        return {}
-    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    candidate = fenced.group(1) if fenced else None
-    if candidate is None:
-        brace = re.search(r"\{.*\}", text, re.DOTALL)
-        candidate = brace.group(0) if brace else None
-    if candidate is None:
-        return {}
-    try:
-        return json.loads(candidate)
-    except json.JSONDecodeError:
-        return {}
 
 
 class LLMAssessor:
