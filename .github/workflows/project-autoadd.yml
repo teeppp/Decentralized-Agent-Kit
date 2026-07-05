@@ -14,6 +14,8 @@ permissions:
 jobs:
   add-to-project:
     runs-on: ubuntu-latest
+    # Project 未設定（bootstrap_project.sh 実行前）はスキップして失敗にしない。
+    if: ${{ vars.DAK_PROJECT_URL != '' }}
     steps:
       - uses: actions/add-to-project@v1.0.2
         with:
