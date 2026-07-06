@@ -337,6 +337,13 @@ class AdaptiveAgent(LlmAgent):
             self.tools = new_tools
             logger.info(f"Updated agent tools: {[t.name for t in self.tools if hasattr(t, 'name')]}")
 
+            # google-adk v2 caches resolved tools per invocation; invalidate so the
+            # newly switched toolset takes effect within this run.
+            try:
+                context._invocation_context.canonical_tools_cache = None
+            except Exception:
+                pass
+
             # Clear the session history: the model should rely only on the new
             # instruction (which contains the summary) and tools.
             session = getattr(context, "session", None)

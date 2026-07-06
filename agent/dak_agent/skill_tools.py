@@ -27,6 +27,36 @@ _SOLANA_WALLET_TOOLS_FILE = os.path.join(
 )
 
 
+def _invalidate_canonical_tools_cache(tool_context) -> None:
+    """Clear google-adk v2's per-invocation tool cache so mid-run tool additions
+    (enable_skill) are visible on the next turn of the same run. No-op on v1 or
+    when the context is unavailable."""
+    try:
+        tool_context._invocation_context.canonical_tools_cache = None
+    except Exception:
+        pass
+
+
+def _sync_to_live_agent(tool_context, source_agent) -> None:
+    """google-adk v2 executes each invocation on a per-run *copy* of the agent, so
+    mutations to the root agent are invisible to the running invocation. Share the
+    updated tools/instruction/active_skills onto the live invocation agent so tools
+    enabled mid-run are callable in the same run. No-op on v1 / without context."""
+    try:
+        live = tool_context._invocation_context.agent
+    except Exception:
+        return
+    if live is None or live is source_agent:
+        return
+    try:
+        live.tools = source_agent.tools
+        live.instruction = source_agent.instruction
+        if hasattr(source_agent, "active_skills"):
+            live.active_skills = source_agent.active_skills
+    except Exception as e:
+        logger.warning("Could not sync enabled skill to live agent: %s", e)
+
+
 def _import_module_from_path(module_name: str, file_path: str):
     if module_name in sys.modules:
         return sys.modules[module_name]
@@ -153,7 +183,7 @@ def make_skill_tools(agent) -> List[FunctionTool]:
 
         return "\n".join(output)
 
-    async def enable_skill(skill_name: str) -> str:
+    async def enable_skill(skill_name: str, tool_context=None) -> str:
         """
         Enable a specific skill OR an individual remote tool.
         This loads the instructions and makes the tools available.
@@ -226,6 +256,14 @@ def make_skill_tools(agent) -> List[FunctionTool]:
         if agent.ap2_enabled and skill_name != "solana_wallet" and "solana_wallet" not in agent.active_skills:
             existing = {getattr(t, "name", None) for t in agent.tools} - {None}
             agent.tools.extend(load_solana_wallet_tools(existing))
+
+        # google-adk v2 runs each invocation on a *copy* of the agent, so the
+        # mutations above (on the closure/root agent) are invisible to the current
+        # run. Mirror the updated tools/instruction/active_skills onto the live
+        # invocation agent (sharing the same objects) so the just-enabled tools are
+        # callable within this same run, and invalidate the per-invocation tool cache.
+        _sync_to_live_agent(tool_context, agent)
+        _invalidate_canonical_tools_cache(tool_context)
 
         return f"'{skill_name}' enabled."
 
