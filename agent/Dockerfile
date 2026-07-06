@@ -34,4 +34,5 @@ EXPOSE 8000
 
 # Use entrypoint to dynamically generate agent.json from AGENT_PUBLIC_URL
 ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["uv", "run", "adk", "web", "--host", "0.0.0.0", "--a2a", "--allow_origins", "http://localhost:3000", "--session_service_uri", "postgresql://username:password@postgres:5432/postgres"]
+# google-adk v2 は async SQLAlchemy を使うため async ドライバ(asyncpg)の URL が必要
+CMD ["uv", "run", "adk", "web", "--host", "0.0.0.0", "--a2a", "--allow_origins", "http://localhost:3000", "--session_service_uri", "postgresql+asyncpg://username:password@postgres:5432/postgres"]
