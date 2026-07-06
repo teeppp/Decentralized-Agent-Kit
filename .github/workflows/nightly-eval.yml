@@ -22,10 +22,10 @@ jobs:
   eval:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Cache Ollama models
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.ollama
           key: ollama-${{ env.MODEL }}
@@ -37,7 +37,7 @@ jobs:
           for i in $(seq 1 30); do curl -sf http://localhost:11434/api/version && break || sleep 1; done
           ollama pull "$MODEL"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v7
 
       - name: Start stack against host Ollama
         env:
@@ -99,7 +99,7 @@ jobs:
 
       - name: Upload eval artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-eval
           path: |
