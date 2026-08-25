@@ -510,7 +510,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.116.0" },
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "fastapi", specifier = ">=0.139.0" },
-    { name = "google-adk", extras = ["a2a", "db", "mcp"], specifier = ">=2.3.0,<3" },
+    { name = "google-adk", extras = ["a2a", "db", "mcp"], specifier = ">=2.4.0,<3" },
     { name = "langfuse", specifier = ">=4.13.0" },
     { name = "litellm", specifier = ">=1.91.0" },
     { name = "mcp", specifier = ">=1.28.1,<2" },
@@ -702,7 +702,7 @@ wheels = [
 
 [[package]]
 name = "google-adk"
-version = "2.3.0"
+version = "2.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiosqlite" },
@@ -730,9 +730,9 @@ dependencies = [
     { name = "watchdog" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0b/cd/b17f7a7574870642be5af42bad831b3800e51529ed2dcdc10493a0a0db23/google_adk-2.3.0.tar.gz", hash = "sha256:4b95c99865a9a6b56e8abd3d3b816935f0db1cebbef328736a269b6537bd1df7", size = 3426370, upload-time = "2026-06-18T18:47:08.4Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/a1/6048b1c22817859bafc1101f8ba26f704233d9acb07e715dff5fb41b9b55/google_adk-2.4.0.tar.gz", hash = "sha256:5a2996b288d591deefcb277eeeeb7da838d72056675763bfef52ad3b36975dde", size = 3566788, upload-time = "2026-07-07T19:46:14.802Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/fe/58024a25902d4c6401388515205990d2706901d23634c97f1c8710934fb4/google_adk-2.3.0-py3-none-any.whl", hash = "sha256:961a08ce50bdc99aaf57e487bae4cc48ed9ee361f15e93562342d4bc3b75739b", size = 3967294, upload-time = "2026-06-18T18:47:06.323Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/ab/12ec18054990ac69f37dae8327f5d8d5e04557bada0d8d725afd872d3020/google_adk-2.4.0-py3-none-any.whl", hash = "sha256:fba91f1a693e5fc2fd13dc40d625562bd52e44a7baaeecedb01811a68063d847", size = 4123277, upload-time = "2026-07-07T19:46:13.026Z" },
 ]
 
 [package.optional-dependencies]
