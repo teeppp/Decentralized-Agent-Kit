@@ -15,7 +15,13 @@ jobs:
   add-to-project:
     runs-on: ubuntu-latest
     # Project 未設定（bootstrap_project.sh 実行前）はスキップして失敗にしない。
-    if: ${{ vars.DAK_PROJECT_URL != '' }}
+    # Dependabot が起点のイベントは "Dependabot secrets" ストアからしか secrets を
+    # 供給されず、通常の Actions secrets である DAK_PROJECT_TOKEN が空になって
+    # 必ず失敗するためスキップする（dependency-triage.yml 冒頭のコメント参照）。
+    # Dependabot PR も Project ボードに乗せたい場合は
+    # `gh secret set DAK_PROJECT_TOKEN --app dependabot --body <token>` で
+    # Dependabot secrets 側にも同じトークンを登録した上でこのガードを外すこと。
+    if: ${{ vars.DAK_PROJECT_URL != '' && github.actor != 'dependabot[bot]' }}
     steps:
       - uses: actions/add-to-project@v2.0.0
         with:

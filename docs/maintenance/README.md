@@ -70,5 +70,11 @@ Dependabot PR
 ## 注意・既知の制約
 
 - **Dependabot と secrets**: 上記のとおり両方のストアに登録が必要。
+- **project-autoadd と Dependabot**: `project-autoadd.yml` は `pull_request`（`_target` ではない）
+  で動くため、Dependabot が起点のイベントは Dependabot secrets ストアからしか secrets を
+  供給されず、通常の Actions secrets である `DAK_PROJECT_TOKEN` が空になって必ず失敗する。
+  そのため Dependabot actor のイベントはスキップするようガードしている。Dependabot PR も
+  Project ボードに乗せたい場合は `gh secret set DAK_PROJECT_TOKEN --app dependabot --body <token>`
+  で Dependabot secrets 側にも同じトークンを登録した上でガードを外すこと。
 - **Ollama on CPU は遅い**: nightly 限定・小型モデル・寛容アサーション・モデル cache。PR ゲートには載せない。
 - **提案ノイズ**: `tech-watch`/`feature-sync` は 1 実行あたり件数上限と重複検出を持たせる。
