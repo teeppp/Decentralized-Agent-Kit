@@ -70,3 +70,25 @@ def classify_update(from_version: str, to_version: str) -> BumpLevel:
     if a_patch != b_patch:
         return BumpLevel.PATCH
     return BumpLevel.NONE
+
+
+_BUMP_SEVERITY = {
+    BumpLevel.PATCH: 0,
+    BumpLevel.MINOR: 1,
+    BumpLevel.UNKNOWN: 2,
+    BumpLevel.MAJOR: 3,
+}
+
+
+def combine_bump(bumps: list[BumpLevel]) -> BumpLevel:
+    """Reduce per-dependency bumps from a grouped Dependabot PR to one verdict.
+
+    NONE entries (no detected version diff for that dependency — e.g. a
+    transitive-only lockfile refresh) carry no signal and are ignored unless
+    they're the only entries. Otherwise the most conservative bump wins:
+    MAJOR > UNKNOWN > MINOR > PATCH.
+    """
+    informative = [b for b in bumps if b is not BumpLevel.NONE]
+    if not informative:
+        return BumpLevel.NONE
+    return max(informative, key=lambda b: _BUMP_SEVERITY[b])

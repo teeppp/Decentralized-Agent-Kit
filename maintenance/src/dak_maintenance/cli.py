@@ -17,8 +17,8 @@ import json
 import os
 import sys
 
-from .semver import classify_update
-from .risk import HeuristicAssessor, LLMAssessor, assess_risk
+from .semver import classify_update, combine_bump
+from .risk import HeuristicAssessor, LLMAssessor, assess_risk, combine_risk
 from .decide import decide
 from .changelog import get_changelog
 from .llm_client import make_complete
@@ -53,11 +53,24 @@ def _emit_proposals(proposals) -> int:
 
 # ---- triage (Tier0/1) ----
 
+def _load_deps(args: argparse.Namespace) -> list[tuple[str, str, str]]:
+    """Return (package, from_version, to_version) triples for this triage run.
+
+    `--deps-json` covers grouped Dependabot PRs (multiple packages in one PR);
+    `--package/--from/--to` remains for single-dependency callers (e.g. the
+    agent's dependency_maintenance skill).
+    """
+    if args.deps_json:
+        raw = json.loads(args.deps_json)
+        return [(d["package"], d.get("from", ""), d.get("to", "")) for d in raw]
+    if not args.package:
+        print("error: --package/--from/--to または --deps-json のいずれかが必要", file=sys.stderr)
+        raise SystemExit(2)
+    return [(args.package, args.from_version, args.to_version)]
+
+
 def cmd_triage(args: argparse.Namespace) -> int:
-    bump = classify_update(args.from_version, args.to_version)
-    changelog = _read(args.changelog_file) if args.changelog_file else (
-        get_changelog(args.package, args.from_version, args.to_version) if args.fetch_changelog else ""
-    )
+    deps = _load_deps(args)
     if args.assessor == "llm":
         complete = make_complete()
         assessor = LLMAssessor(complete, tier="llm") if complete else HeuristicAssessor()
@@ -65,14 +78,34 @@ def cmd_triage(args: argparse.Namespace) -> int:
             print("warn: ASSESSOR=llm だが MAINT_LLM_* 未設定。heuristic にフォールバック。", file=sys.stderr)
     else:
         assessor = HeuristicAssessor()
-    risk = assess_risk(args.package, args.from_version, args.to_version, changelog, assessor)
+
+    per_dep = []
+    for package, from_version, to_version in deps:
+        bump = classify_update(from_version, to_version)
+        changelog = _read(args.changelog_file) if args.changelog_file else (
+            get_changelog(package, from_version, to_version) if args.fetch_changelog else ""
+        )
+        risk = assess_risk(package, from_version, to_version, changelog, assessor)
+        per_dep.append((package, bump, risk))
+
+    bump = combine_bump([b for _, b, _ in per_dep])
+    risk = combine_risk([r for _, _, r in per_dep])
     decision = decide(bump, _bool(args.ci_passed), risk)
 
+    reason = decision.reason
+    if len(per_dep) > 1:
+        detail = "; ".join(f"{p}: bump={b.value},risk={r.level.value}" for p, b, r in per_dep)
+        reason = f"{reason} [内訳: {detail}]"
+
     result = {
-        "package": args.package, "from": args.from_version, "to": args.to_version,
+        "packages": [p for p, _, _ in per_dep],
         "bump": bump.value,
         "risk": {"level": risk.level.value, "summary": risk.summary, "tier": risk.tier},
-        "decision": {"action": decision.action, "reason": decision.reason, "labels": decision.labels},
+        "decision": {"action": decision.action, "reason": reason, "labels": decision.labels},
+        "per_dependency": [
+            {"package": p, "bump": b.value, "risk": r.level.value, "summary": r.summary}
+            for p, b, r in per_dep
+        ],
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
     gh_out = os.getenv("GITHUB_OUTPUT")
@@ -80,7 +113,7 @@ def cmd_triage(args: argparse.Namespace) -> int:
         with open(gh_out, "a", encoding="utf-8") as f:
             f.write(f"action={decision.action}\nbump={bump.value}\nrisk={risk.level.value}\n")
             f.write("labels=" + ",".join(decision.labels) + "\n")
-            f.write("reason=" + decision.reason.replace("\n", " ") + "\n")
+            f.write("reason=" + reason.replace("\n", " ") + "\n")
     return 0
 
 
@@ -126,9 +159,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     t = sub.add_parser("triage", help="依存更新を判定する")
-    t.add_argument("--package", required=True)
-    t.add_argument("--from", dest="from_version", required=True)
-    t.add_argument("--to", dest="to_version", required=True)
+    t.add_argument("--package", default=None, help="単一依存モード（--deps-json 未指定時は必須）")
+    t.add_argument("--from", dest="from_version", default=None)
+    t.add_argument("--to", dest="to_version", default=None)
+    t.add_argument(
+        "--deps-json", default=None,
+        help='グループ化された Dependabot PR 用: JSON配列 [{"package","from","to"}, ...]',
+    )
     t.add_argument("--ci-passed", default="false")
     t.add_argument("--changelog-file", default=None)
     t.add_argument("--fetch-changelog", action="store_true")

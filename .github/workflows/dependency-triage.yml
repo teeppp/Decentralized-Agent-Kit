@@ -43,12 +43,15 @@ jobs:
           MAINT_LLM_BASE_URL: ${{ vars.MAINT_LLM_BASE_URL }}
           MAINT_LLM_MODEL: ${{ vars.MAINT_LLM_MODEL }}
           MAINT_LLM_API_KEY: ${{ secrets.MAINT_LLM_API_KEY }}
+          # グループ化PR（複数パッケージ）でも各パッケージの実際の from/to を使うため
+          # dependency-names（カンマ結合の単一文字列）ではなく updated-dependencies-json
+          # （パッケージごとの構造化データ）を渡す。
+          UPDATED_DEPS_JSON: ${{ steps.meta.outputs.updated-dependencies-json }}
         run: |
           uv sync
+          deps_json=$(jq -c '[.[] | {package: .dependencyName, from: .prevVersion, to: .newVersion}]' <<< "$UPDATED_DEPS_JSON")
           uv run dak-maint triage \
-            --package "${{ steps.meta.outputs.dependency-names }}" \
-            --from "${{ steps.meta.outputs.previous-version }}" \
-            --to "${{ steps.meta.outputs.new-version }}" \
+            --deps-json "$deps_json" \
             --ci-passed true \
             --fetch-changelog \
             --assessor "${{ vars.MAINT_ASSESSOR || 'heuristic' }}"

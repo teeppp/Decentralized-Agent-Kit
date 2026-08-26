@@ -2,7 +2,9 @@ from dak_maintenance.risk import (
     HeuristicAssessor,
     LLMAssessor,
     RiskLevel,
+    RiskVerdict,
     assess_risk,
+    combine_risk,
     extract_json,
 )
 
@@ -79,4 +81,22 @@ def test_llm_assessor_falls_back_on_exception():
 
 def test_llm_assessor_empty_changelog_is_unknown():
     v = LLMAssessor(lambda p: '{"level":"safe"}').assess("pkg", "1.0.0", "1.0.1", "  ")
+    assert v.level is RiskLevel.UNKNOWN
+
+
+def test_combine_risk_picks_worst_and_keeps_its_summary():
+    safe = RiskVerdict(RiskLevel.SAFE, "ok", "heuristic")
+    breaking = RiskVerdict(RiskLevel.BREAKING, "removed X", "heuristic")
+    v = combine_risk([safe, breaking])
+    assert v.level is RiskLevel.BREAKING
+    assert "removed X" in v.summary
+
+
+def test_combine_risk_single_passthrough():
+    only = RiskVerdict(RiskLevel.SAFE, "ok", "heuristic")
+    assert combine_risk([only]) is only
+
+
+def test_combine_risk_empty_is_unknown():
+    v = combine_risk([])
     assert v.level is RiskLevel.UNKNOWN
