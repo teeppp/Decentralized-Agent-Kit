@@ -10,13 +10,18 @@ on:
     inputs:
       model:
         description: "Ollama model (LiteLLM format is added automatically)"
-        default: "llama3.2:3b"
+        default: "llama3.1:8b"
 
 permissions:
   contents: write # history.jsonl 追記コミット用（main が保護されている場合は soft fail）
 
 env:
-  MODEL: ${{ github.event.inputs.model || 'llama3.2:3b' }}
+  # llama3.2:3b was the original default but has never produced a passing
+  # run (docs/eval/history.jsonl: pass_rate 0.0 every night since inception)
+  # — it doesn't reliably emit structured tool calls. README.md's own
+  # real-LLM smoke test table recommends llama3.1:8b as the model that
+  # actually passes; use that here too so this signal means something.
+  MODEL: ${{ github.event.inputs.model || 'llama3.1:8b' }}
 
 jobs:
   eval:
