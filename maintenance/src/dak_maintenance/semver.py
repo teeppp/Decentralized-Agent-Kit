@@ -37,9 +37,15 @@ def _parse(version: str) -> tuple[int, int, int] | None:
 def classify_update(from_version: str, to_version: str) -> BumpLevel:
     """Classify the semver bump between two versions.
 
-    A 0.x.y bump in the leading nonzero component is treated conservatively:
-    for 0.x releases a minor bump often carries breaking changes, so a change
-    in the first *nonzero* position is escalated to MAJOR.
+    0.x releases are classified the same as 1.x+ (major/minor/patch component
+    changed). We used to escalate any 0.x minor-position change straight to
+    MAJOR on the theory that pre-1.0 packages can break at any time, but this
+    repo's actual dependency stack (fastapi, uvicorn, anthropic-sdk, langfuse,
+    litellm, ...) lives almost entirely on 0.x and releases routine, well
+    documented minor versions — the blanket escalation meant *every* routine
+    update got flagged MAJOR and no dependency PR ever qualified for
+    auto-merge. Real breaking changes are now caught by the changelog-based
+    risk assessor (see risk.py) instead of a blunt version-number heuristic.
     """
     a = _parse(from_version)
     b = _parse(to_version)
@@ -54,14 +60,6 @@ def classify_update(from_version: str, to_version: str) -> BumpLevel:
     # ダウングレードは通常起きない（起きたら人間判断へ）
     if b < a:
         return BumpLevel.UNKNOWN
-
-    # 0.x 系: 最初の非ゼロ成分の変化を破壊的とみなす（PEP 440 の慣行）
-    if a_major == 0 and b_major == 0:
-        if a_minor != b_minor:
-            return BumpLevel.MAJOR
-        if a_patch != b_patch:
-            return BumpLevel.MINOR
-        return BumpLevel.NONE
 
     if a_major != b_major:
         return BumpLevel.MAJOR

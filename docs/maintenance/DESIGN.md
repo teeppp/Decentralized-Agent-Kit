@@ -75,7 +75,10 @@ scripts/setup/
 疎結合の独立パッケージ（`httpx` のみ依存、CLI `dak-maint`）。3 つの純関数が核:
 
 - `classify_update(from, to) -> BumpLevel` … semver 判定（**Tier0**、LLM 不要）。
-  `0.x` は minor 変化も破壊的とみなす保守設計。
+  `0.x` も 1.x+ と同じ規則（major成分の変化のみ major）。実際の破壊的変更検知は
+  changelog ベースの `assess_risk` に委ねる（0.x 系の minor bump を一律 major
+  扱いすると、このリポジトリの依存スタックはほぼ全部 0.x のため恒常的に
+  needs-human-review へ落ちてしまい auto-merge が機能しなくなるため）。
 - `assess_risk(pkg, from, to, changelog, assessor) -> RiskVerdict` … changelog リスク評価。
   - `HeuristicAssessor`（**Tier1**、キーワード走査、常に使える）
   - `LLMAssessor`（**Tier1/2**、注入した `complete(prompt)->str` に委譲。不正応答時は heuristic にフォールバック）

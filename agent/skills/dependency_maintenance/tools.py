@@ -36,8 +36,7 @@ except Exception:  # pragma: no cover - fallback path
             return "none"
         if pb < pa:
             return "unknown"
-        if pa[0] == 0 and pb[0] == 0:
-            return "major" if pa[1] != pb[1] else ("minor" if pa[2] != pb[2] else "none")
+        # 0.x も 1.x+ と同じ規則（major成分の変化のみ major）。CI 側の semver.py と同期。
         if pa[0] != pb[0]:
             return "major"
         if pa[1] != pb[1]:
