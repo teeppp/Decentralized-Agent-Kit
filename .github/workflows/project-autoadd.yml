@@ -2,10 +2,19 @@ name: Add to Project
 
 # 新規 Issue / PR を自動で GitHub Project に追加する。
 # すべての作業を Project 上で一元管理するための土台（要件1）。
+#
+# pull_request ではなく pull_request_target を使う: このジョブは PR コードの
+# checkout や実行を一切行わず（add-to-project は GitHub API 呼び出しのみ）、
+# 通常 pull_request_target で懸念される「信頼できない PR コードを特権シークレット
+# で実行する」リスクが存在しない。一方 Dependabot が起点の pull_request イベントは
+# 別ストア（"Dependabot secrets"）からしか secrets が供給されず、通常の Actions
+# secrets である DAK_PROJECT_TOKEN が空になって必ず失敗していた
+# （dependency-triage.yml 冒頭のコメント参照）。pull_request_target なら常に
+# 通常の Actions secrets が使われるため、この問題が起きない。
 on:
   issues:
     types: [opened, reopened]
-  pull_request:
+  pull_request_target:
     types: [opened, reopened]
 
 permissions:
@@ -15,13 +24,7 @@ jobs:
   add-to-project:
     runs-on: ubuntu-latest
     # Project 未設定（bootstrap_project.sh 実行前）はスキップして失敗にしない。
-    # Dependabot が起点のイベントは "Dependabot secrets" ストアからしか secrets を
-    # 供給されず、通常の Actions secrets である DAK_PROJECT_TOKEN が空になって
-    # 必ず失敗するためスキップする（dependency-triage.yml 冒頭のコメント参照）。
-    # Dependabot PR も Project ボードに乗せたい場合は
-    # `gh secret set DAK_PROJECT_TOKEN --app dependabot --body <token>` で
-    # Dependabot secrets 側にも同じトークンを登録した上でこのガードを外すこと。
-    if: ${{ vars.DAK_PROJECT_URL != '' && github.actor != 'dependabot[bot]' }}
+    if: ${{ vars.DAK_PROJECT_URL != '' }}
     steps:
       - uses: actions/add-to-project@v2.0.0
         with:
