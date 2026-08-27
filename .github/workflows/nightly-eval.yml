@@ -36,6 +36,7 @@ jobs:
           key: ollama-${{ env.MODEL }}
 
       - name: Install and start Ollama
+        timeout-minutes: 15
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
           nohup ollama serve > ollama.log 2>&1 &
@@ -55,9 +56,16 @@ jobs:
       - name: Run gated real-LLM smoke (tolerant)
         id: smoke
         continue-on-error: true
+        timeout-minutes: 30
         working-directory: tests/integration
         env:
           DAK_SMOKE_REAL_LLM: "1"
+          # llama3.1:8b was validated (README) on Metal-GPU-accelerated Ollama;
+          # this runner does CPU-only inference, which can be substantially
+          # slower per turn. Give it more headroom than the 120s default so a
+          # slow-but-working turn doesn't get miscounted as a tool-calling
+          # failure; timeout-minutes above still bounds the worst case.
+          DAK_AGENT_RUN_TIMEOUT: "300"
         run: |
           uv sync
           uv run pytest -q test_smoke_real_llm.py --junitxml=eval-report.xml
