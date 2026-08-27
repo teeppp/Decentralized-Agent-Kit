@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
   issues: write
+  # `gh pr list --search` (deps 収集) 用。付けないと GITHUB_TOKEN の scope が
+  # 暗黙に none になり検索が失敗しうる。
+  pull-requests: read
 
 jobs:
   feature-sync:
@@ -45,17 +48,27 @@ jobs:
           import json, re, sys
 
           per_item_re = re.compile(r"Updates `([^`]+)` from (\S+) to (\S+)")
-          single_re = re.compile(r"Bumps? \[([^\]]+)\]\([^)]*\) from (\S+) to (\S+)\.")
+          # 非貪欲 (.+?) にして、extras 付きパッケージ名（例: google-adk[a2a,db,mcp]）に
+          # 含まれる ']' で "]\(" より前にマッチが終わらないようにする。
+          single_re = re.compile(r"Bumps? \[(.+?)\]\([^)]*\) from (\S+) to (\S+)\.")
 
           prs = json.load(sys.stdin)
-          deps, seen = [], set()
+          deps, seen, skipped = [], set(), 0
           for pr in prs:
               body = pr.get("body") or ""
               matches = per_item_re.findall(body) or single_re.findall(body)
+              if not matches:
+                  # dependabot の "requirement update"（範囲指定のみで確定バージョンが
+                  # ない）PR 等、具体的な from/to が本文に存在しないケース。抽出対象が
+                  # ないのは正常なので、無言で捨てずログに残す。
+                  skipped += 1
+                  continue
               for name, frm, to in matches:
                   if name not in seen:
                       seen.add(name)
                       deps.append({"package": name, "from": frm, "to": to})
+          if skipped:
+              print(f"note: {skipped} 件の deps-labeled PR は from/to を抽出できず対象外", file=sys.stderr)
           json.dump(deps[:10], sys.stdout)
           PY
           cat deps.json
