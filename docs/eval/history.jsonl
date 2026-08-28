@@ -52,3 +52,4 @@
 {"date": "2026-08-25", "model": "llama3.2:3b", "total": 4, "passed": 0, "failed": 4, "skipped": 0, "pass_rate": 0.0}
 {"date": "2026-08-26", "model": "llama3.2:3b", "total": 4, "passed": 0, "failed": 4, "skipped": 0, "pass_rate": 0.0}
 {"date": "2026-08-27", "model": "llama3.2:3b", "total": 4, "passed": 0, "failed": 4, "skipped": 0, "pass_rate": 0.0}
+{"date": "2026-08-28", "model": "llama3.1:8b", "total": 4, "passed": 0, "failed": 4, "skipped": 0, "pass_rate": 0.0}
