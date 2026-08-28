@@ -41,7 +41,14 @@ jobs:
           curl -fsSL https://ollama.com/install.sh | sh
           nohup ollama serve > ollama.log 2>&1 &
           for i in $(seq 1 30); do curl -sf http://localhost:11434/api/version && break || sleep 1; done
-          ollama pull "$MODEL"
+          # ~4.9GB の pull は一過性のネットワーク断で落ちやすい。リトライで
+          # 夜間シグナルが丸ごと欠ける事態を減らす（timeout-minutes が上限）。
+          for attempt in 1 2 3; do
+            ollama pull "$MODEL" && break
+            [ "$attempt" = 3 ] && exit 1
+            echo "pull failed (attempt $attempt), retrying in 15s..."
+            sleep 15
+          done
 
       - uses: astral-sh/setup-uv@v7
 
