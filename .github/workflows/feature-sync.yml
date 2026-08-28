@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
   issues: write
+  # `gh pr list --search` (deps 収集) 用。付けないと GITHUB_TOKEN の scope が
+  # 暗黙に none になり検索が失敗しうる。
+  pull-requests: read
 
 jobs:
   feature-sync:
@@ -22,8 +25,6 @@ jobs:
       MAINT_LLM_API_KEY: ${{ secrets.MAINT_LLM_API_KEY }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
@@ -32,15 +33,42 @@ jobs:
       - name: Collect recently updated deps
         working-directory: maintenance
         run: |
-          # Dependabot の既定コミット件名 "Bump <pkg> from <a> to <b>" を解析。
-          git log --since="2 weeks ago" --pretty=%s | python3 - <<'PY' > deps.json
+          # 元は "git log ... | grep 'Bump <pkg> from <a> to <b>'" でコミット件名を
+          # 解析していたが、dependabot.yml がPR数削減のため minor/patch をグループ化
+          # しており、グループ化コミットの件名は "bump the X group ... with N updates"
+          # で from/to を含まないため一致せず、実質ほぼ常に deps=[] になっていた。
+          # 代わりにマージ済み "deps" ラベルPRの本文を見る: dependabot は単一更新でも
+          # グループ更新でも各パッケージごとに "Updates `<pkg>` from <a> to <b>" 行を
+          # 本文に必ず含める（グループでない単発PRのみ "Bumps [<pkg>](url) from <a> to <b>."
+          # という別形式になるためそちらもフォールバックで拾う）。
+          since=$(date -u -d '14 days ago' +%Y-%m-%d)
+          gh pr list --state merged --search "label:deps merged:>=$since" \
+            --limit 30 --json body \
+            | python3 - <<'PY' > deps.json
           import json, re, sys
-          deps, seen = [], set()
-          for line in sys.stdin:
-              m = re.search(r"[Bb]ump (\S+) from (\S+) to (\S+)", line)
-              if m and m.group(1) not in seen:
-                  seen.add(m.group(1))
-                  deps.append({"package": m.group(1), "from": m.group(2), "to": m.group(3)})
+
+          per_item_re = re.compile(r"Updates `([^`]+)` from (\S+) to (\S+)")
+          # 非貪欲 (.+?) にして、extras 付きパッケージ名（例: google-adk[a2a,db,mcp]）に
+          # 含まれる ']' で "]\(" より前にマッチが終わらないようにする。
+          single_re = re.compile(r"Bumps? \[(.+?)\]\([^)]*\) from (\S+) to (\S+)\.")
+
+          prs = json.load(sys.stdin)
+          deps, seen, skipped = [], set(), 0
+          for pr in prs:
+              body = pr.get("body") or ""
+              matches = per_item_re.findall(body) or single_re.findall(body)
+              if not matches:
+                  # dependabot の "requirement update"（範囲指定のみで確定バージョンが
+                  # ない）PR 等、具体的な from/to が本文に存在しないケース。抽出対象が
+                  # ないのは正常なので、無言で捨てずログに残す。
+                  skipped += 1
+                  continue
+              for name, frm, to in matches:
+                  if name not in seen:
+                      seen.add(name)
+                      deps.append({"package": name, "from": frm, "to": to})
+          if skipped:
+              print(f"note: {skipped} 件の deps-labeled PR は from/to を抽出できず対象外", file=sys.stderr)
           json.dump(deps[:10], sys.stdout)
           PY
           cat deps.json
