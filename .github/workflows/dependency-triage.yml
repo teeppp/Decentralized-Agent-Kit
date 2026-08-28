@@ -55,6 +55,7 @@ jobs:
           # （パッケージごとの構造化データ）を渡す。
           UPDATED_DEPS_JSON: ${{ steps.meta.outputs.updated-dependencies-json }}
         run: |
+          set -euo pipefail
           uv sync
           deps_json=$(jq -c '[.[] | {package: .dependencyName, from: .prevVersion, to: .newVersion}]' <<< "$UPDATED_DEPS_JSON")
           assessor="$MAINT_ASSESSOR"
