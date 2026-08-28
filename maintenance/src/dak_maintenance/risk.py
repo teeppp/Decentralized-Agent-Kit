@@ -136,3 +136,25 @@ def assess_risk(
 ) -> RiskVerdict:
     """Convenience wrapper. Defaults to the deterministic HeuristicAssessor."""
     return (assessor or HeuristicAssessor()).assess(package, from_version, to_version, changelog)
+
+
+_RISK_SEVERITY = {
+    RiskLevel.SAFE: 0,
+    RiskLevel.UNKNOWN: 1,
+    RiskLevel.RISKY: 2,
+    RiskLevel.BREAKING: 3,
+}
+
+
+def combine_risk(verdicts: list[RiskVerdict]) -> RiskVerdict:
+    """Reduce per-dependency risk verdicts from a grouped Dependabot PR to the
+    worst-case overall verdict, so one breaking/risky member doesn't get
+    masked by the rest of the group being safe.
+    """
+    if not verdicts:
+        return RiskVerdict(RiskLevel.UNKNOWN, "評価対象の依存が見つからなかった。", "heuristic")
+    if len(verdicts) == 1:
+        return verdicts[0]
+    worst_level = max((v.level for v in verdicts), key=lambda level: _RISK_SEVERITY[level])
+    matching = [v for v in verdicts if v.level is worst_level]
+    return RiskVerdict(worst_level, "; ".join(v.summary for v in matching), matching[0].tier)

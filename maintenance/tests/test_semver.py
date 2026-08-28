@@ -1,4 +1,4 @@
-from dak_maintenance.semver import BumpLevel, classify_update
+from dak_maintenance.semver import BumpLevel, classify_update, combine_bump
 
 
 def test_patch_bump():
@@ -41,3 +41,18 @@ def test_unparseable_is_unknown():
 
 def test_downgrade_is_unknown():
     assert classify_update("2.0.0", "1.9.0") is BumpLevel.UNKNOWN
+
+
+def test_combine_bump_picks_most_severe():
+    assert combine_bump([BumpLevel.PATCH, BumpLevel.MINOR]) is BumpLevel.MINOR
+    assert combine_bump([BumpLevel.MINOR, BumpLevel.MAJOR, BumpLevel.PATCH]) is BumpLevel.MAJOR
+    assert combine_bump([BumpLevel.PATCH, BumpLevel.UNKNOWN]) is BumpLevel.UNKNOWN
+
+
+def test_combine_bump_ignores_none_unless_only_entries():
+    assert combine_bump([BumpLevel.NONE, BumpLevel.PATCH]) is BumpLevel.PATCH
+    assert combine_bump([BumpLevel.NONE, BumpLevel.NONE]) is BumpLevel.NONE
+
+
+def test_combine_bump_empty_is_none():
+    assert combine_bump([]) is BumpLevel.NONE
