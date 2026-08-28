@@ -23,10 +23,20 @@ def test_v_prefix_and_suffixes():
     assert classify_update("1.2.3", "1.3.0+local") is BumpLevel.MINOR
 
 
-def test_zero_major_minor_is_treated_as_major():
-    # 0.x では minor 変化を破壊的とみなす
-    assert classify_update("0.27.0", "0.28.0") is BumpLevel.MAJOR
-    assert classify_update("0.27.0", "0.27.1") is BumpLevel.MINOR
+def test_zero_major_classified_like_any_other_major():
+    # 0.x は 1.x+ と同じ規則（major成分の変化のみ MAJOR）。実際の破壊的変更検知は
+    # changelog ベースの risk assessor（risk.py）に委ねる。
+    assert classify_update("0.27.0", "0.28.0") is BumpLevel.MINOR
+    assert classify_update("0.27.0", "0.27.1") is BumpLevel.PATCH
+    assert classify_update("0.27.0", "1.0.0") is BumpLevel.MAJOR
+
+
+def test_double_zero_patch_is_patch():
+    # 0.0.x はポリシー変更で挙動が最も変わったサブケース: 旧ルール（最初の非ゼロ
+    # 成分の変化を1段階引き上げ）では 0.0.1→0.0.2 は MINOR だったが、現行の
+    # 一律ルールでは PATCH。0.0.x→0.1.0 は MINOR になる。
+    assert classify_update("0.0.1", "0.0.2") is BumpLevel.PATCH
+    assert classify_update("0.0.1", "0.1.0") is BumpLevel.MINOR
 
 
 def test_missing_components_default_zero():

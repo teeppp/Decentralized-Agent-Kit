@@ -14,7 +14,9 @@ assessed SAFE (no breaking changes). Everything else -> human review.
 
 # Available Actions
 - `classify_bump(from_version, to_version)` — returns the semver bump level
-  (major/minor/patch/none/unknown). 0.x minor bumps are treated as major.
+  (major/minor/patch/none/unknown). 0.x is classified like any other version
+  (only a major-component change counts as major); changelog risk assessment
+  is what catches actual breaking changes.
 - `triage_dependency(package, from_version, to_version, ci_passed, changelog)` —
   full decision: bump × CI × changelog-risk → "auto-merge" or "needs-human-review"
   with a reason. Pass the changelog text you have; leave empty if unknown
