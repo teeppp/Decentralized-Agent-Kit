@@ -31,6 +31,14 @@ def test_zero_major_classified_like_any_other_major():
     assert classify_update("0.27.0", "1.0.0") is BumpLevel.MAJOR
 
 
+def test_double_zero_patch_is_patch():
+    # 0.0.x はポリシー変更で挙動が最も変わったサブケース: 旧ルール（最初の非ゼロ
+    # 成分の変化を1段階引き上げ）では 0.0.1→0.0.2 は MINOR だったが、現行の
+    # 一律ルールでは PATCH。0.0.x→0.1.0 は MINOR になる。
+    assert classify_update("0.0.1", "0.0.2") is BumpLevel.PATCH
+    assert classify_update("0.0.1", "0.1.0") is BumpLevel.MINOR
+
+
 def test_missing_components_default_zero():
     assert classify_update("1", "1.0.1") is BumpLevel.PATCH
     assert classify_update("1.2", "1.3") is BumpLevel.MINOR
