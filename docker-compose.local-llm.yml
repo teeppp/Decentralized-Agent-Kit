@@ -28,13 +28,23 @@ services:
     environment:
       - MODEL_NAME=${LOCAL_MODEL_NAME:-ollama_chat/llama3.1:8b}
       - OLLAMA_API_BASE=http://host.docker.internal:11434
+    # host.docker.internal は Docker Desktop (macOS/Windows) でしか自動解決されない。
+    # 素の Linux Docker Engine（GitHub Actions ランナー等）では host-gateway の
+    # 明示が必要。これが無いと agent が Ollama に到達できず /run が即 500 になる
+    # （nightly-eval が発足以来 pass_rate 0.0 だった根本原因）。macOS では無害。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   agent-enforcer:
     environment:
       - MODEL_NAME=${LOCAL_MODEL_NAME:-ollama_chat/llama3.1:8b}
       - OLLAMA_API_BASE=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   agent-ap2:
     environment:
       - MODEL_NAME=${LOCAL_MODEL_NAME:-ollama_chat/llama3.1:8b}
       - OLLAMA_API_BASE=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
