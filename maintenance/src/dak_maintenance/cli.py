@@ -61,8 +61,13 @@ def _load_deps(args: argparse.Namespace) -> list[tuple[str, str, str]]:
     agent's dependency_maintenance skill).
     """
     if args.deps_json:
-        raw = json.loads(args.deps_json)
-        return [(d["package"], d.get("from", ""), d.get("to", "")) for d in raw]
+        try:
+            raw = json.loads(args.deps_json)
+            return [(d["package"], d.get("from", ""), d.get("to", "")) for d in raw]
+        except (ValueError, TypeError, KeyError, AttributeError) as e:
+            print(f"error: --deps-json の形式が不正 ({e.__class__.__name__}: {e})。"
+                  ' 期待形式: [{"package": ..., "from": ..., "to": ...}, ...]', file=sys.stderr)
+            raise SystemExit(2)
     if not args.package:
         print("error: --package/--from/--to または --deps-json のいずれかが必要", file=sys.stderr)
         raise SystemExit(2)
