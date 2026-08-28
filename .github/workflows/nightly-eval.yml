@@ -74,7 +74,7 @@ jobs:
       - name: Run gated real-LLM smoke (tolerant)
         id: smoke
         continue-on-error: true
-        timeout-minutes: 30
+        timeout-minutes: 45
         working-directory: tests/integration
         env:
           DAK_SMOKE_REAL_LLM: "1"
@@ -83,7 +83,11 @@ jobs:
           # slower per turn. Give it more headroom than the 120s default so a
           # slow-but-working turn doesn't get miscounted as a tool-calling
           # failure; timeout-minutes above still bounds the worst case.
-          DAK_AGENT_RUN_TIMEOUT: "300"
+          # 300s was enough for 3/4 tests on the first connected run
+          # (2026-08-28: pass_rate 0.75) but test_skill_discovery_and_use —
+          # the heaviest prompt (most tools) — still hit ReadTimeout; 600s
+          # gives the slowest turn CPU headroom without unbounding the job.
+          DAK_AGENT_RUN_TIMEOUT: "600"
         run: |
           uv sync
           uv run pytest -q test_smoke_real_llm.py --junitxml=eval-report.xml
