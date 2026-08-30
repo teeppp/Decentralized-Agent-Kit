@@ -79,6 +79,19 @@ class TestModeManager(unittest.TestCase):
         manager = ModeManager(model_name="ollama_chat/llama3.1:8b")
         self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
 
+    def test_default_model_resolves_full_context_window(self):
+        """The default model (newer than litellm's map) resolves via the override table."""
+        manager = ModeManager()
+        self.assertEqual(
+            manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["gemini-3.7-flash"]
+        )
+        self.assertNotEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
+
+    def test_gemini_3x_resolves_context_window_via_litellm(self):
+        """Gemini 3.x IDs that litellm already maps resolve without an override entry."""
+        manager = ModeManager(model_name="gemini/gemini-3.5-flash-lite")
+        self.assertGreater(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
+
     def test_requested_focus_is_consumed_once(self):
         """A stale LLM-requested focus must not leak into later automatic switches."""
         self.mode_manager.request_switch(reason="need tools", new_focus="deploy the app")

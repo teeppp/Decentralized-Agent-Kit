@@ -9,7 +9,7 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://username:password@postgres:5432/postgres
       - MCP_SERVER_URL=http://mcp-server:8000/mcp
-      - MODEL_NAME=${MODEL_NAME:-gemini-2.5-flash}
+      - MODEL_NAME=${MODEL_NAME:-gemini-3.7-flash}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GEMINI_API_KEY=${GOOGLE_API_KEY}
