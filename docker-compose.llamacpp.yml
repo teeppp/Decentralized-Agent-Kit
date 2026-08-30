@@ -1,0 +1,42 @@
+# Real-LLM smoke verification against a llama.cpp server (llama-server).
+#
+# llama-server exposes an OpenAI-compatible /v1 endpoint, so the agents use the
+# same "openai/" LiteLLM provider as the fake-LLM stack — just pointed at the
+# real server. The server itself is NOT managed by compose: it runs wherever
+# the GPU is (this machine, a Colab VM behind an SSH forward, or a LAN GPU box)
+# and is reached on the HOST at LLAMACPP_API_BASE. See
+# docs/guides/local_llm_llamacpp.md for per-machine setups.
+#
+# Usage (layer on top of the integration stack):
+#   llama-server -hf <model.gguf> --port 18080 --jinja     # or an SSH tunnel to :18080
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml \
+#                  -f docker-compose.llamacpp.yml up -d --wait
+# Or simply: ./scripts/smoke_llamacpp.sh
+#
+# llama-server serves whatever model it was started with and ignores the model
+# name in requests, so LLAMACPP_MODEL_NAME only needs the "openai/" prefix.
+
+services:
+  agent:
+    environment:
+      - MODEL_NAME=${LLAMACPP_MODEL_NAME:-openai/llamacpp}
+      - OPENAI_API_BASE=${LLAMACPP_API_BASE:-http://host.docker.internal:18080/v1}
+      - OPENAI_API_KEY=dummy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  agent-enforcer:
+    environment:
+      - MODEL_NAME=${LLAMACPP_MODEL_NAME:-openai/llamacpp}
+      - OPENAI_API_BASE=${LLAMACPP_API_BASE:-http://host.docker.internal:18080/v1}
+      - OPENAI_API_KEY=dummy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  agent-ap2:
+    environment:
+      - MODEL_NAME=${LLAMACPP_MODEL_NAME:-openai/llamacpp}
+      - OPENAI_API_BASE=${LLAMACPP_API_BASE:-http://host.docker.internal:18080/v1}
+      - OPENAI_API_KEY=dummy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

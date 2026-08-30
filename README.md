@@ -4,7 +4,7 @@ An intelligent agent framework with LLM integration, Model Context Protocol (MCP
 
 ## Features
 
-- **Multi-LLM Support**: Gemini, OpenAI, Anthropic, Amazon Bedrock, Local LLM (Ollama) via LiteLLM
+- **Multi-LLM Support**: Gemini, OpenAI, Anthropic, Amazon Bedrock, Local LLM (Ollama / llama.cpp) via LiteLLM
 - **MCP Protocol**: Dynamic tool discovery and execution via Model Context Protocol (multiple servers supported)
 - **Agent Skills**: Extend the agent with `SKILL.md`-based skills loaded from one or more directories
 - **A2A Protocol**: Agent-to-Agent communication for collaborative workflows
@@ -210,6 +210,16 @@ cents; useful when local hardware is busy or to vet a provider):
 ```bash
 ./scripts/smoke_cloud_llm.sh                                  # openai/gpt-5.6-luna
 CLOUD_MODEL_NAME=gemini/gemini-2.5-flash-lite ./scripts/smoke_cloud_llm.sh
+```
+
+A [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` also works
+(same OpenAI-compatible path; the server can run locally, on a Colab GPU behind
+an SSH forward, or on a LAN GPU box — see
+[docs/guides/local_llm_llamacpp.md](docs/guides/local_llm_llamacpp.md)):
+
+```bash
+llama-server -hf bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M --port 18080 --jinja &
+./scripts/smoke_llamacpp.sh
 ```
 
 The UI is also covered by a real browser E2E (Playwright/Chromium) that types
