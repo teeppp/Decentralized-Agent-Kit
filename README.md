@@ -204,6 +204,14 @@ or `--keep` to leave the stack up. These tests are tolerant of a local model's
 non-determinism — they assert the pipeline reaches a sane outcome, not exact
 wording. They are gated behind `DAK_SMOKE_REAL_LLM=1` and are not part of CI.
 
+The same suite can also run against a cheap **cloud** model (a run costs a few
+cents; useful when local hardware is busy or to vet a provider):
+
+```bash
+./scripts/smoke_cloud_llm.sh                                  # openai/gpt-5.6-luna
+CLOUD_MODEL_NAME=gemini/gemini-2.5-flash-lite ./scripts/smoke_cloud_llm.sh
+```
+
 The UI is also covered by a real browser E2E (Playwright/Chromium) that types
 into the HTMX chat, asserts the rendered DOM, and saves screenshots:
 

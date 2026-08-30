@@ -1,0 +1,38 @@
+# Real-LLM smoke verification against a cheap CLOUD model (API key required).
+#
+# The fake-LLM stack (docker-compose.test.yml) pins the agents to the fake
+# OpenAI endpoint; this overlay re-points them at a real provider. Layer it:
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml \
+#                  -f docker-compose.cloud-llm.yml up -d --wait
+# Or simply: ./scripts/smoke_cloud_llm.sh
+#
+# Default model is openai/gpt-5.6-luna ($0.20 in / $1.20 out per 1M tok as of
+# 2026-08): the best tool-calling reliability per dollar we found. A full smoke
+# run costs on the order of a few cents. Other candidates:
+#   openai/gpt-5-nano                                      $0.05 / $0.40 (cheapest)
+#   gemini/gemini-2.5-flash-lite                           $0.10 / $0.40 (free tier exists)
+#   gemini/gemini-2.5-flash                                $0.30 / $2.50
+#   bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0    $1.00 / $5.00
+#
+# Override with CLOUD_MODEL_NAME (LiteLLM format). Credentials come from the
+# host environment / .env (Bedrock auth: docs/getting-started/bedrock.md).
+
+services:
+  agent:
+    environment:
+      - MODEL_NAME=${CLOUD_MODEL_NAME:-openai/gpt-5.6-luna}
+      # docker-compose.test.yml points these at the fake LLM; restore the real ones.
+      - OPENAI_API_BASE=https://api.openai.com/v1
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+
+  agent-enforcer:
+    environment:
+      - MODEL_NAME=${CLOUD_MODEL_NAME:-openai/gpt-5.6-luna}
+      - OPENAI_API_BASE=https://api.openai.com/v1
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+
+  agent-ap2:
+    environment:
+      - MODEL_NAME=${CLOUD_MODEL_NAME:-openai/gpt-5.6-luna}
+      - OPENAI_API_BASE=https://api.openai.com/v1
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
