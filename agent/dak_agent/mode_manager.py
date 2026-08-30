@@ -28,20 +28,36 @@ class ModeManager:
         "gemini-2.0-flash-exp": 1000000,
         "default": 128000,
     }
-    
+
+    # Substring fallbacks for models reached through provider prefixes whose
+    # exact IDs vary by route — e.g. Bedrock inference profiles like
+    # "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0". Values are
+    # conservative (Claude Opus/Sonnet reach 1M, but Haiku is 200K), so the
+    # mode switch just triggers earlier than strictly necessary.
+    MODEL_FAMILY_MAX_TOKENS = [
+        ("claude", 200000),
+        ("gpt-5.6", 1000000),
+    ]
+
     def __init__(self, model_name: str = "gemini-2.5-flash"):
         self.model_name = model_name
         # The model name may carry a LiteLLM provider prefix (e.g. "gemini/gemini-2.5-flash");
         # strip it for the context-window lookup.
         bare_model_name = model_name.rsplit("/", 1)[-1]
-        self.max_context_tokens = self.MODEL_MAX_TOKENS.get(
-            bare_model_name,
-            self.MODEL_MAX_TOKENS["default"]
-        )
+        self.max_context_tokens = self._lookup_max_tokens(bare_model_name)
         self.token_threshold = 0.5  # 50% threshold
         self._is_first_turn = True
         self._switch_requested = False
-    
+
+    @classmethod
+    def _lookup_max_tokens(cls, bare_model_name: str) -> int:
+        if bare_model_name in cls.MODEL_MAX_TOKENS:
+            return cls.MODEL_MAX_TOKENS[bare_model_name]
+        for fragment, max_tokens in cls.MODEL_FAMILY_MAX_TOKENS:
+            if fragment in bare_model_name:
+                return max_tokens
+        return cls.MODEL_MAX_TOKENS["default"]
+
     def should_switch(self, context_token_count: int = 0) -> bool:
         """
         Decides if a mode switch is necessary.

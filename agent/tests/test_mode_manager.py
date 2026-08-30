@@ -55,5 +55,18 @@ class TestModeManager(unittest.TestCase):
         manager = ModeManager(model_name="gemini/gemini-2.5-flash")
         self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["gemini-2.5-flash"])
 
+    def test_bedrock_claude_resolves_family_context_window(self):
+        """Bedrock inference-profile IDs resolve via the model-family fallback."""
+        manager = ModeManager(model_name="bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
+        self.assertEqual(manager.max_context_tokens, 200000)
+
+    def test_bedrock_gpt56_resolves_family_context_window(self):
+        manager = ModeManager(model_name="bedrock/us.openai.gpt-5.6-luna")
+        self.assertEqual(manager.max_context_tokens, 1000000)
+
+    def test_unknown_model_uses_default_context_window(self):
+        manager = ModeManager(model_name="bedrock/amazon.nova-micro-v1:0")
+        self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
+
 if __name__ == '__main__':
     unittest.main()
