@@ -209,7 +209,7 @@ cents; useful when local hardware is busy or to vet a provider):
 
 ```bash
 ./scripts/smoke_cloud_llm.sh                                  # openai/gpt-5.6-luna
-CLOUD_MODEL_NAME=gemini/gemini-3.5-flash-lite ./scripts/smoke_cloud_llm.sh
+CLOUD_MODEL_NAME=gemini/gemini-3.5-flash-lite ./scripts/smoke_cloud_llm.sh   # free-tier option
 ```
 
 A [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` also works

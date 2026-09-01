@@ -8,11 +8,14 @@
 #
 # Default model is openai/gpt-5.6-luna ($0.20 in / $1.20 out per 1M tok as of
 # 2026-08): the best tool-calling reliability per dollar we found. A full smoke
-# run costs on the order of a few cents. Other candidates:
+# run costs on the order of a few cents. Other candidates (prices as of 2026-08):
 #   openai/gpt-5-nano                                      $0.05 / $0.40 (cheapest)
-#   gemini/gemini-3.5-flash-lite                           $0.30 / $2.50 (free tier exists)
-#   gemini/gemini-3.7-flash                                $0.75 / $3.75 (promo until 2026-12-31)
+#   gemini/gemini-3.5-flash-lite                           $0.30 / $2.50
+#   gemini/gemini-3.7-flash                                $0.75 / $3.75 (promo pricing)
 #   bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0    $1.00 / $5.00
+# Note the gemini rows cost MORE per token than the default; they are listed
+# for their free tier (zero-cost smoke runs) and for vetting the agent's
+# default Gemini model, not for price.
 #
 # Override with CLOUD_MODEL_NAME (LiteLLM format). Credentials come from the
 # host environment / .env (Bedrock auth: docs/getting-started/bedrock.md).
