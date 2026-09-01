@@ -10,20 +10,30 @@
 # Usage:
 #   ./scripts/smoke_llamacpp.sh                    # expects llama-server at :18080
 #   LLAMACPP_PORT=8080 ./scripts/smoke_llamacpp.sh
+#   LLAMACPP_WAIT=1200 ./scripts/smoke_llamacpp.sh # first run downloads the model
 #   ./scripts/smoke_llamacpp.sh --keep             # leave the stack running
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/smoke_common.sh
 
 PORT="${LLAMACPP_PORT:-18080}"
 export LLAMACPP_API_BASE="${LLAMACPP_API_BASE:-http://host.docker.internal:${PORT}/v1}"
+# Probe the same endpoint the containers will use, translated to the host's
+# point of view (host.docker.internal only resolves inside containers). This
+# keeps the preflight honest when LLAMACPP_API_BASE is overridden directly.
+PROBE_BASE="${LLAMACPP_API_BASE%/v1}"
+PROBE_BASE="${PROBE_BASE/host.docker.internal/localhost}"
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.llamacpp.yml)
 KEEP="${1:-}"
+WAIT="${LLAMACPP_WAIT:-300}"
 
-echo "==> Checking llama-server on localhost:${PORT}..."
-if ! curl -sf --max-time 3 "http://localhost:${PORT}/health" > /dev/null; then
-    cat >&2 <<EOF
-No llama-server reachable at http://localhost:${PORT}.
+echo "==> Waiting for llama-server at ${PROBE_BASE} (up to ${WAIT}s)..."
+DEADLINE=$((SECONDS + WAIT))
+until curl -sf --max-time 3 "${PROBE_BASE}/health" > /dev/null; do
+    if [ "${SECONDS}" -ge "${DEADLINE}" ]; then
+        cat >&2 <<EOF
+No llama-server became reachable at ${PROBE_BASE} within ${WAIT}s.
 
 Start one first (see docs/guides/local_llm_llamacpp.md), e.g.:
   * This machine (Metal/CUDA):
@@ -31,32 +41,25 @@ Start one first (see docs/guides/local_llm_llamacpp.md), e.g.:
                    --port ${PORT} --jinja -c 8192
   * Colab GPU VM (google-colab-cli): ssh -N colab-llm   # LocalForward ${PORT}
   * LAN GPU server: ssh -N -L ${PORT}:localhost:8080 <gpu-host>
+If the server is still downloading its model, re-run with a larger
+LLAMACPP_WAIT (a first run fetches several GB).
 EOF
-    exit 1
-fi
+        exit 1
+    fi
+    sleep 3
+done
 
 echo "==> Warming up (loads weights / verifies completion path)..."
-curl -sf --max-time 120 "http://localhost:${PORT}/v1/chat/completions" \
+curl -sf --max-time 120 "${PROBE_BASE}/v1/chat/completions" \
     -H 'Content-Type: application/json' \
     -d '{"model": "llamacpp", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 4}' > /dev/null \
     || { echo "llama-server answered /health but not /v1/chat/completions." >&2; exit 1; }
 
-[ -f .env ] || touch .env
+# llama-server ignores the model name in requests, so surface what is actually
+# being served — otherwise a stale server or wrong tunnel silently attributes
+# this run's pass/fail to the wrong model.
+SERVED_MODEL=$(curl -sf --max-time 3 "${PROBE_BASE}/v1/models" \
+    | sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+echo "==> Serving model: ${SERVED_MODEL:-unknown} (endpoint: ${LLAMACPP_API_BASE})"
 
-echo "==> Starting the stack (endpoint: ${LLAMACPP_API_BASE})..."
-"${COMPOSE[@]}" up -d --build --wait
-
-echo "==> Running real-LLM smoke tests..."
-set +e
-(cd tests/integration && uv sync -q && DAK_SMOKE_REAL_LLM=1 uv run pytest test_smoke_real_llm.py -v -p no:cacheprovider)
-RESULT=$?
-set -e
-
-if [ "${KEEP}" != "--keep" ]; then
-    echo "==> Tearing down..."
-    "${COMPOSE[@]}" down -v
-else
-    echo "==> Stack left running (BFF: http://localhost:8002)."
-fi
-
-exit "${RESULT}"
+run_smoke_stack "${KEEP}" "${COMPOSE[@]}"

@@ -44,7 +44,7 @@ uv tool install git+https://github.com/googlecolab/google-colab-cli.git
 colab new -s local-llm --gpu G4      # コンピューティングユニットを消費する点に注意
 colab ssh -s local-llm               # ~/.ssh/config に Host エントリを書く
 # VM 側: モデル取得と llama-server 起動（VM のシェルで）
-#   llama-server -hf <model.gguf> --port 18080 -ngl 99
+#   llama-server -hf <model.gguf> --port 18080 -ngl 99 --jinja
 # ローカル側: フォワードを維持
 ssh -N colab-llm                     # LocalForward 18080 が開く
 curl http://127.0.0.1:18080/health   # 確認
@@ -53,13 +53,23 @@ curl http://127.0.0.1:18080/health   # 確認
 
 ### C. Ubuntu GPU サーバ（LAN / SSH トンネル）
 
-サーバ側で llama-server（CUDA ビルド, `-ngl 99`）を 8080 などで起動し、
+サーバ側で llama-server（CUDA ビルド, `-ngl 99 --jinja`）を 8080 などで起動し、
 ローカルへトンネルする:
 
 ```bash
 ssh -N -L 18080:localhost:8080 <gpu-host> &
 ./scripts/smoke_llamacpp.sh
 ```
+
+**Linux ホストで compose スタックを動かす場合の注意**: 素の Docker Engine では
+`host.docker.internal` は bridge ゲートウェイ IP（例 172.17.0.1）に解決されるため、
+**127.0.0.1 にバインドされたリスナーにはコンテナから到達できない**（`ssh -L` も
+llama-server も既定はループバックバインド）。ホストの `curl localhost:18080` は
+通るのにコンテナが全部 connection refused になったらこれ。
+`ssh -N -L 0.0.0.0:18080:localhost:8080 <gpu-host>`（または llama-server 側を
+`--host 0.0.0.0` で起動）にする。macOS / Docker Desktop では不要。
+同じ失敗クラスの前例: `docker-compose.local-llm.yml` のコメントと
+`nightly-eval.yml` の `OLLAMA_HOST=0.0.0.0`。
 
 ## モデル選択の指針
 
@@ -79,3 +89,4 @@ golden 化して決定論スイートに還元する（`docs/eval/README.md` の
 GitHub Actions の無料ランナーは CPU のみで、nightly-eval は既に Ollama を
 使っている。llama.cpp を CI に載せる価値が出るのは GPU 付き self-hosted
 runner（Ubuntu GPU サーバ）を導入する場合 — これは別 Issue で検討。
+その際はセクション C の Linux ループバックバインドの注意が必ず該当する。

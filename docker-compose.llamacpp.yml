@@ -16,27 +16,25 @@
 # llama-server serves whatever model it was started with and ignores the model
 # name in requests, so LLAMACPP_MODEL_NAME only needs the "openai/" prefix.
 
+# One block for all three agent services: a partial edit that reached only one
+# of them would silently point that agent at a different endpoint.
+# NOTE: LLAMACPP_PORT is a knob of scripts/smoke_llamacpp.sh only (it turns it
+# into LLAMACPP_API_BASE); when launching this overlay with compose directly,
+# set LLAMACPP_API_BASE yourself for a non-default port. (OPENAI_API_KEY is
+# already a dummy via docker-compose.test.yml.)
+x-llamacpp: &llamacpp
+  environment:
+    - MODEL_NAME=${LLAMACPP_MODEL_NAME:-openai/llamacpp}
+    - OPENAI_API_BASE=${LLAMACPP_API_BASE:-http://host.docker.internal:18080/v1}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
 services:
   agent:
-    environment:
-      - MODEL_NAME=${LLAMACPP_MODEL_NAME:-openai/llamacpp}
-      - OPENAI_API_BASE=${LLAMACPP_API_BASE:-http://host.docker.internal:18080/v1}
-      - OPENAI_API_KEY=dummy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    <<: *llamacpp
 
   agent-enforcer:
-    environment:
-      - MODEL_NAME=${LLAMACPP_MODEL_NAME:-openai/llamacpp}
-      - OPENAI_API_BASE=${LLAMACPP_API_BASE:-http://host.docker.internal:18080/v1}
-      - OPENAI_API_KEY=dummy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    <<: *llamacpp
 
   agent-ap2:
-    environment:
-      - MODEL_NAME=${LLAMACPP_MODEL_NAME:-openai/llamacpp}
-      - OPENAI_API_BASE=${LLAMACPP_API_BASE:-http://host.docker.internal:18080/v1}
-      - OPENAI_API_KEY=dummy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    <<: *llamacpp

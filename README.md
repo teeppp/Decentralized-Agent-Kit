@@ -219,7 +219,8 @@ an SSH forward, or on a LAN GPU box — see
 
 ```bash
 llama-server -hf bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M --port 18080 --jinja &
-./scripts/smoke_llamacpp.sh
+./scripts/smoke_llamacpp.sh    # waits for the server; first run downloads ~4.9GB,
+                               # so allow more time with LLAMACPP_WAIT=1200
 ```
 
 The UI is also covered by a real browser E2E (Playwright/Chromium) that types
