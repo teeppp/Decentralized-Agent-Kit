@@ -50,23 +50,45 @@ class TestModeManager(unittest.TestCase):
         self.assertEqual(selected_tool_names, [])
         self.assertEqual(instruction, "Continue with current task.")
 
-    def test_litellm_prefix_stripped_for_token_lookup(self):
+    def test_litellm_prefix_resolves_context_window(self):
         """A LiteLLM-prefixed model name still resolves its context window size."""
         manager = ModeManager(model_name="gemini/gemini-2.5-flash")
-        self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["gemini-2.5-flash"])
+        self.assertGreater(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
 
-    def test_bedrock_claude_resolves_family_context_window(self):
-        """Bedrock inference-profile IDs resolve via the model-family fallback."""
+    def test_bedrock_claude_resolves_context_window(self):
+        """Bedrock inference-profile IDs resolve via litellm's model map."""
         manager = ModeManager(model_name="bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0")
         self.assertEqual(manager.max_context_tokens, 200000)
 
-    def test_bedrock_gpt56_resolves_family_context_window(self):
+    def test_bedrock_claude_large_window_not_underestimated(self):
+        """1M-window Bedrock Claude must not be clamped to the 200K family guess."""
+        manager = ModeManager(model_name="bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0")
+        self.assertEqual(manager.max_context_tokens, 1000000)
+
+    def test_bedrock_gpt56_resolves_context_window(self):
         manager = ModeManager(model_name="bedrock/us.openai.gpt-5.6-luna")
         self.assertEqual(manager.max_context_tokens, 1000000)
 
     def test_unknown_model_uses_default_context_window(self):
-        manager = ModeManager(model_name="bedrock/amazon.nova-micro-v1:0")
+        """IDs litellm can't map (e.g. a llama-server alias) get the conservative default."""
+        manager = ModeManager(model_name="openai/llamacpp")
         self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
+
+    def test_model_without_map_entry_tokens_uses_default(self):
+        """litellm entries with max_input_tokens=None fall back to the default."""
+        manager = ModeManager(model_name="ollama_chat/llama3.1:8b")
+        self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
+
+    def test_requested_focus_is_consumed_once(self):
+        """A stale LLM-requested focus must not leak into later automatic switches."""
+        self.mode_manager.request_switch(reason="need tools", new_focus="deploy the app")
+        self.assertEqual(self.mode_manager.consume_requested_focus(), "deploy the app")
+        self.assertIsNone(self.mode_manager.consume_requested_focus())
+
+    def test_reset_session_clears_requested_focus(self):
+        self.mode_manager.request_switch(reason="need tools", new_focus="deploy the app")
+        self.mode_manager.reset_session()
+        self.assertIsNone(self.mode_manager.consume_requested_focus())
 
 if __name__ == '__main__':
     unittest.main()

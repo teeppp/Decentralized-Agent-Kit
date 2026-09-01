@@ -259,7 +259,7 @@ class AdaptiveAgent(LlmAgent):
             logger.info("Initiating Mode Switch...")
 
             history_summary = self._extract_history_summary(context)
-            requested_focus = getattr(self._mode_manager, "_requested_focus", None)
+            requested_focus = self._mode_manager.consume_requested_focus()
 
             # Expand MCP toolsets into individual tools so the Meta-Agent can see them
             expanded_available_tools = []

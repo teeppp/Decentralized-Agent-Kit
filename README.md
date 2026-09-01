@@ -224,8 +224,8 @@ ANTHROPIC_API_KEY=your_anthropic_key  # optional
 
 # LLM Configuration
 MODEL_NAME=gemini-2.5-flash  # or 'openai/gpt-5.6-luna', 'anthropic/claude-...',
-                             # 'bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0'
-                             # (Bedrock auth: docs/getting-started/bedrock.md), local model
+                             # 'bedrock/...' (model IDs & auth:
+                             # docs/getting-started/bedrock.md), local model
 
 # Enforcer Mode
 ENABLE_ENFORCER_MODE=true    # Enable strict ReAct pattern (Ulysses Pact)

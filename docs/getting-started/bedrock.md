@@ -41,7 +41,7 @@ LiteLLM は両方をサポートする。使い分けの指針:
 | 方式 | 環境変数 | 向いている場面 | 注意点 |
 |------|----------|----------------|--------|
 | **Bedrock API キー**（bearer） | `AWS_BEARER_TOKEN_BEDROCK` | ローカル開発・コンテナに env で渡すだけの手軽さ | 長期キーは IAM ユーザー紐付き（最大2本、Bedrock 限定スコープ）。漏洩時のリスクは SigV4 より高いので本番非推奨 |
-| **標準 AWS 認証（SigV4）** | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`（または `AWS_PROFILE`） | 本番・CI。AWS 推奨のデフォルト | SSO 利用時はコンテナに `~/.aws` が無いので、`aws configure export-credentials --format env` で一時クレデンシャルを環境変数化してから compose up |
+| **標準 AWS 認証（SigV4）** | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | 本番・CI。AWS 推奨のデフォルト | コンテナには `~/.aws` が無いので `AWS_PROFILE` は効かない。named profile（SSO・静的いずれも）は `aws configure export-credentials --format env` で環境変数化してから compose up |
 
 **このリポジトリでの推奨**: ローカル開発は Bedrock API キー（短期発行を優先）、
 CI で使う場合は GitHub OIDC → STS の一時クレデンシャル（SigV4）。
@@ -57,15 +57,7 @@ MODEL_NAME=bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0 docker compose up
 ## コンテキストウィンドウ
 
 動的モード切替（`docs/dynamic_mode_switching.md`）はモデルのコンテキスト長 50% で
-発火する。Bedrock の ID は `agent/dak_agent/mode_manager.py` の
-モデルファミリ・フォールバック（`claude` → 200K、`gpt-5.6` → 1M）で解決される。
-未知のモデルは保守的に 128K 扱いになるだけで、動作は壊れない。
-
-## 実LLMスモークを Bedrock で回す
-
-```bash
-CLOUD_MODEL_NAME=bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0 \
-  ./scripts/smoke_cloud_llm.sh
-```
-
-（クラウドモデルでのスモーク実行は `scripts/smoke_cloud_llm.sh` を参照。）
+発火する。コンテキスト長は litellm のモデルマップ（`litellm.get_model_info`）から
+自動解決されるので、Bedrock の inference-profile ID もそのまま実際の値になる。
+マップに無いモデルは保守的に 128K 扱いになるだけで、動作は壊れない
+（`agent/dak_agent/mode_manager.py`）。
