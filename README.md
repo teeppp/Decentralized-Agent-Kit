@@ -4,7 +4,7 @@ An intelligent agent framework with LLM integration, Model Context Protocol (MCP
 
 ## Features
 
-- **Multi-LLM Support**: Gemini, OpenAI, Anthropic, Local LLM (Ollama) via LiteLLM
+- **Multi-LLM Support**: Gemini, OpenAI, Anthropic, Amazon Bedrock, Local LLM (Ollama) via LiteLLM
 - **MCP Protocol**: Dynamic tool discovery and execution via Model Context Protocol (multiple servers supported)
 - **Agent Skills**: Extend the agent with `SKILL.md`-based skills loaded from one or more directories
 - **A2A Protocol**: Agent-to-Agent communication for collaborative workflows
@@ -223,7 +223,9 @@ OPENAI_API_KEY=your_openai_key        # optional
 ANTHROPIC_API_KEY=your_anthropic_key  # optional
 
 # LLM Configuration
-MODEL_NAME=gemini-2.5-flash  # or 'openai/gpt-4o', 'anthropic/claude-...', local model
+MODEL_NAME=gemini-2.5-flash  # or 'openai/gpt-5.6-luna', 'anthropic/claude-...',
+                             # 'bedrock/...' (model IDs & auth:
+                             # docs/getting-started/bedrock.md), local model
 
 # Enforcer Mode
 ENABLE_ENFORCER_MODE=true    # Enable strict ReAct pattern (Ulysses Pact)

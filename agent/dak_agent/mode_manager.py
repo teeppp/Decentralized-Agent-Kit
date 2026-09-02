@@ -20,28 +20,45 @@ class ModeManager:
     - LLM calls `switch_mode` tool
     """
     
-    # Model context window sizes (approximate)
+    # Context-window sizes normally come from litellm's model map (see
+    # _lookup_max_tokens). This table only overrides models the pinned litellm
+    # doesn't know yet, plus the conservative default for unknown/local models
+    # (a too-small value just makes the mode switch trigger earlier; a
+    # too-large one would let the context overflow before it ever fires).
     MODEL_MAX_TOKENS = {
-        "gemini-2.5-flash": 1000000,
-        "gemini-2.5-pro": 1000000,
-        "gemini-3-pro-preview": 1000000,
-        "gemini-2.0-flash-exp": 1000000,
         "default": 128000,
     }
-    
+
     def __init__(self, model_name: str = "gemini-2.5-flash"):
         self.model_name = model_name
-        # The model name may carry a LiteLLM provider prefix (e.g. "gemini/gemini-2.5-flash");
-        # strip it for the context-window lookup.
-        bare_model_name = model_name.rsplit("/", 1)[-1]
-        self.max_context_tokens = self.MODEL_MAX_TOKENS.get(
-            bare_model_name,
-            self.MODEL_MAX_TOKENS["default"]
-        )
+        self.max_context_tokens = self._lookup_max_tokens(model_name)
         self.token_threshold = 0.5  # 50% threshold
         self._is_first_turn = True
         self._switch_requested = False
-    
+        self._requested_focus: Optional[str] = None
+
+    @classmethod
+    def _lookup_max_tokens(cls, model_name: str) -> int:
+        # The model name may carry a LiteLLM provider prefix
+        # (e.g. "gemini/gemini-2.5-flash"); the override table is keyed bare,
+        # while litellm resolves prefixed IDs as-is (Bedrock inference
+        # profiles included).
+        bare_model_name = model_name.rsplit("/", 1)[-1]
+        if bare_model_name in cls.MODEL_MAX_TOKENS:
+            return cls.MODEL_MAX_TOKENS[bare_model_name]
+        try:
+            import litellm  # deferred: keeps module import light
+
+            max_input = litellm.get_model_info(model_name).get("max_input_tokens")
+            if max_input:  # some entries carry None
+                return max_input
+        except Exception:
+            logger.info(
+                f"Model '{model_name}' not in litellm's model map; "
+                f"assuming {cls.MODEL_MAX_TOKENS['default']} context tokens."
+            )
+        return cls.MODEL_MAX_TOKENS["default"]
+
     def should_switch(self, context_token_count: int = 0) -> bool:
         """
         Decides if a mode switch is necessary.
@@ -78,10 +95,18 @@ class ModeManager:
         self._switch_requested = True
         self._requested_focus = new_focus
     
+    def consume_requested_focus(self) -> Optional[str]:
+        """Return the LLM-requested focus (if any) and clear it, so a later
+        threshold-triggered switch doesn't inherit a stale objective."""
+        focus = self._requested_focus
+        self._requested_focus = None
+        return focus
+
     def reset_session(self):
         """Reset for a new session."""
         self._is_first_turn = True
         self._switch_requested = False
+        self._requested_focus = None
 
     def generate_mode_config(
         self,
