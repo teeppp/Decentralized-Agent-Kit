@@ -61,3 +61,12 @@ MODEL_NAME=bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0 docker compose up
 自動解決されるので、Bedrock の inference-profile ID もそのまま実際の値になる。
 マップに無いモデルは保守的に 128K 扱いになるだけで、動作は壊れない
 （`agent/dak_agent/mode_manager.py`）。
+
+## 実LLMスモークを Bedrock で回す
+
+```bash
+CLOUD_MODEL_NAME=bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0 \
+  ./scripts/smoke_cloud_llm.sh
+```
+
+（クラウドモデルでのスモーク実行の詳細は `scripts/smoke_cloud_llm.sh` を参照。）

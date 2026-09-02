@@ -42,10 +42,10 @@
    - `gh variable set MAINT_LLM_BASE_URL --body "<base url>"`
    - `gh variable set MAINT_LLM_MODEL --body "<model id>"`
    - `gh secret set MAINT_LLM_API_KEY --body "<api key>"`（Ollama は任意の値でOK）
-   - プリセット例:
-     - **Gemini**: `https://generativelanguage.googleapis.com/v1beta/openai` / `gemini-2.5-flash` /（`GOOGLE_API_KEY`）
-     - **Ollama**: `http://<host>:11434/v1` / `llama3.1:8b` /（任意）
-     - **OpenAI**: `https://api.openai.com/v1` / `gpt-4o-mini`
+   - プリセット例（2026-08 時点の参考価格 in/out per 1M tok）:
+     - **OpenAI**: `https://api.openai.com/v1` / `gpt-5.6-luna`（$0.20/$1.20 — **有料の第一推奨**。tool calling 対応・1M ctx でこの価格帯では最も能力/コスト比が良い。さらに絞るなら `gpt-5-nano` $0.05/$0.40）
+     - **Gemini**: `https://generativelanguage.googleapis.com/v1beta/openai` / `gemini-2.5-flash-lite`（$0.10/$0.40、AI Studio 無料枠あり — **ゼロコスト運用ならこれ**。品質重視なら `gemini-2.5-flash` $0.30/$2.50）
+     - **Ollama**: `http://<host>:11434/v1` / `llama3.1:8b`（無料・要ホスト）
    - **triage で LLM 評価も使う場合**は上記を **Dependabot secrets/variables にも登録**
      （Dependabot PR には通常の Actions secrets が渡らないため）。未設定なら triage は
      heuristic（キーワード）評価にフォールバックし、reasoning 系は提案 0 件で失敗しない。

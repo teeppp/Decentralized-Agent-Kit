@@ -13,6 +13,10 @@ DAK の「実モデル」品質を継続的に測るための仕組み（要件6
    `.github/workflows/nightly-eval.yml` が小型モデルでゲート済みスモークを実行し、
    pass-rate を `history.jsonl` に追記する。PR ゲートではなく傾向シグナル。
 
+補助: 同じスモークを安価なクラウドモデルで手動実行することもできる
+（`./scripts/smoke_cloud_llm.sh`、既定 `openai/gpt-5.6-luna`、1 回数セント程度）。
+ローカルの GPU/メモリが塞がっている時や、プロバイダ採用前の品質確認に使う。
+
 ## history.jsonl
 
 1 行 1 実行の JSON Lines:
