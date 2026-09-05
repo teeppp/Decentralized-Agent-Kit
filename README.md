@@ -209,7 +209,7 @@ cents; useful when local hardware is busy or to vet a provider):
 
 ```bash
 ./scripts/smoke_cloud_llm.sh                                  # openai/gpt-5.6-luna
-CLOUD_MODEL_NAME=gemini/gemini-2.5-flash-lite ./scripts/smoke_cloud_llm.sh
+CLOUD_MODEL_NAME=gemini/gemini-3.5-flash-lite ./scripts/smoke_cloud_llm.sh   # free-tier option
 ```
 
 A [llama.cpp](https://github.com/ggml-org/llama.cpp) `llama-server` also works
@@ -242,7 +242,7 @@ OPENAI_API_KEY=your_openai_key        # optional
 ANTHROPIC_API_KEY=your_anthropic_key  # optional
 
 # LLM Configuration
-MODEL_NAME=gemini-2.5-flash  # or 'openai/gpt-5.6-luna', 'anthropic/claude-...',
+MODEL_NAME=gemini-3.7-flash  # or 'openai/gpt-5.6-luna', 'anthropic/claude-...',
                              # 'bedrock/...' (model IDs & auth:
                              # docs/getting-started/bedrock.md), local model
 

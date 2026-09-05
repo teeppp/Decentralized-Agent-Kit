@@ -9,7 +9,7 @@ Pick a provider purely via env:
   MAINT_LLM_API_KEY    api key ("ollama" / anything for keyless local)
 
 Presets (set BASE_URL/MODEL accordingly):
-  Gemini  https://generativelanguage.googleapis.com/v1beta/openai   gemini-2.5-flash   (GOOGLE_API_KEY)
+  Gemini  https://generativelanguage.googleapis.com/v1beta/openai   gemini-3.5-flash-lite   (GOOGLE_API_KEY)
   Ollama  http://localhost:11434/v1                                 llama3.2:3b        (any key)
   OpenAI  https://api.openai.com/v1                                 gpt-4o-mini        (OPENAI_API_KEY)
   Anthropic https://api.anthropic.com/v1                            claude-sonnet-5    (ANTHROPIC_API_KEY)

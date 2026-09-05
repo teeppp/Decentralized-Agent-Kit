@@ -37,7 +37,7 @@ body:
     id: model
     attributes:
       label: 使用モデル / MODEL_NAME
-      description: 例 `gemini-2.5-flash`, `ollama_chat/llama3.1:8b`, `openai/fake-default`
+      description: 例 `gemini-3.7-flash`, `ollama_chat/llama3.1:8b`, `openai/fake-default`
     validations:
       required: false
   - type: textarea
