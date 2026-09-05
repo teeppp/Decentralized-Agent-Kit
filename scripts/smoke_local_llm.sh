@@ -16,6 +16,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/smoke_common.sh
 
 MODEL="${LOCAL_OLLAMA_MODEL:-llama3.1:8b}"
 export LOCAL_MODEL_NAME="ollama_chat/${MODEL}"
@@ -37,22 +38,5 @@ echo "==> Warming up ${MODEL} (loads weights into memory)..."
 curl -sf http://localhost:11434/api/generate \
     -d "{\"model\": \"${MODEL}\", \"prompt\": \"hi\", \"stream\": false}" > /dev/null
 
-[ -f .env ] || touch .env
-
-echo "==> Starting the stack (model: ${LOCAL_MODEL_NAME})..."
-"${COMPOSE[@]}" up -d --build --wait
-
-echo "==> Running real-LLM smoke tests..."
-set +e
-(cd tests/integration && uv sync -q && DAK_SMOKE_REAL_LLM=1 uv run pytest test_smoke_real_llm.py -v -p no:cacheprovider)
-RESULT=$?
-set -e
-
-if [ "${KEEP}" != "--keep" ]; then
-    echo "==> Tearing down..."
-    "${COMPOSE[@]}" down -v
-else
-    echo "==> Stack left running (BFF: http://localhost:8002)."
-fi
-
-exit "${RESULT}"
+echo "==> Model: ${LOCAL_MODEL_NAME}"
+run_smoke_stack "${KEEP}" "${COMPOSE[@]}"

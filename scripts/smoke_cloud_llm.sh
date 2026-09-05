@@ -14,6 +14,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/smoke_common.sh
 
 export CLOUD_MODEL_NAME="${CLOUD_MODEL_NAME:-openai/gpt-5.6-luna}"
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.cloud-llm.yml)
@@ -44,20 +45,4 @@ case "${CLOUD_MODEL_NAME}" in
         echo "==> Unknown provider prefix; assuming credentials are already configured." ;;
 esac
 
-echo "==> Starting the stack..."
-"${COMPOSE[@]}" up -d --build --wait
-
-echo "==> Running real-LLM smoke tests..."
-set +e
-(cd tests/integration && uv sync -q && DAK_SMOKE_REAL_LLM=1 uv run pytest test_smoke_real_llm.py -v -p no:cacheprovider)
-RESULT=$?
-set -e
-
-if [ "${KEEP}" != "--keep" ]; then
-    echo "==> Tearing down..."
-    "${COMPOSE[@]}" down -v
-else
-    echo "==> Stack left running (BFF: http://localhost:8002)."
-fi
-
-exit "${RESULT}"
+run_smoke_stack "${KEEP}" "${COMPOSE[@]}"
