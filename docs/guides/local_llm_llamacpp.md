@@ -16,6 +16,30 @@ Ollama（`scripts/smoke_local_llm.sh`）に加えて、**llama.cpp の `llama-se
 LLAMACPP_PORT=8080 ./scripts/smoke_llamacpp.sh
 ```
 
+## 通常の DAK アプリから接続する
+
+`llama-server` のエンドポイントがホストの `18080` 番ポートから利用できる場合、
+通常のDAKアプリは専用overlayを重ねて起動する。
+
+```bash
+curl http://127.0.0.1:18080/health
+docker compose -f docker-compose.yml -f docker-compose.llamacpp.yml up -d --build
+```
+
+接続先、モデル別名、サーバーのcontext sizeはシェル環境または `.env` で変更できる。
+
+```dotenv
+LLAMACPP_API_BASE=http://host.docker.internal:18080/v1
+LLAMACPP_API_KEY=not-used
+LLAMACPP_MODEL_NAME=openai/llamacpp
+LLAMACPP_CONTEXT_SIZE=8192
+```
+
+`LLAMACPP_MODEL_NAME` にはLiteLLMがOpenAI互換APIを使うための `openai/` prefixを
+付ける。`LLAMACPP_CONTEXT_SIZE` はサーバー起動時のcontext sizeと一致させる。
+DAKはこの値をモード切替・コンテキスト圧縮の判断に使うため、サーバーより大きい
+値を設定しないこと。llama.cppサーバーの配置やモデル管理はDAKの対象外となる。
+
 ## マシン別セットアップ
 
 ### A. この Mac（Metal）

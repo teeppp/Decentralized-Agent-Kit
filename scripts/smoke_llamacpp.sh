@@ -24,7 +24,10 @@ export LLAMACPP_API_BASE="${LLAMACPP_API_BASE:-http://host.docker.internal:${POR
 # keeps the preflight honest when LLAMACPP_API_BASE is overridden directly.
 PROBE_BASE="${LLAMACPP_API_BASE%/v1}"
 PROBE_BASE="${PROBE_BASE/host.docker.internal/localhost}"
-COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.llamacpp.yml)
+# Keep the smoke database and its teardown isolated from the normal DAK stack.
+# The shared smoke helper removes volumes after a run, so using the default
+# Compose project here could otherwise delete the application's Postgres data.
+COMPOSE=(docker compose -p "${DAK_SMOKE_COMPOSE_PROJECT:-dak-llamacpp-smoke}" -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.llamacpp.yml -f docker-compose.llamacpp.test.yml)
 KEEP="${1:-}"
 WAIT="${LLAMACPP_WAIT:-300}"
 

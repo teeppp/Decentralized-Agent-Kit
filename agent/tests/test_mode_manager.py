@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import MagicMock, patch
 from dak_agent.mode_manager import ModeManager
@@ -73,6 +74,18 @@ class TestModeManager(unittest.TestCase):
         """IDs litellm can't map (e.g. a llama-server alias) get the conservative default."""
         manager = ModeManager(model_name="openai/llamacpp")
         self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
+
+    @patch.dict(os.environ, {"MODEL_CONTEXT_WINDOW": "8192"})
+    def test_explicit_context_window_for_self_hosted_server(self):
+        manager = ModeManager(model_name="openai/llamacpp")
+        self.assertEqual(manager.max_context_tokens, 8192)
+
+    @patch.dict(os.environ, {"MODEL_CONTEXT_WINDOW": "not-a-number"})
+    @patch("dak_agent.mode_manager.ModeManager._lookup_max_tokens", return_value=12345)
+    def test_invalid_explicit_context_window_falls_back(self, mock_lookup):
+        manager = ModeManager(model_name="openai/llamacpp")
+        self.assertEqual(manager.max_context_tokens, 12345)
+        mock_lookup.assert_called_once_with("openai/llamacpp")
 
     def test_model_without_map_entry_tokens_uses_default(self):
         """litellm entries with max_input_tokens=None fall back to the default."""
