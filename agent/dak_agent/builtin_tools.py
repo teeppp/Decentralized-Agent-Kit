@@ -3,6 +3,7 @@
 These tools are always available and are never removed by mode switching
 or skill filtering.
 """
+import os
 from typing import List
 
 from google.adk.tools import FunctionTool
@@ -76,6 +77,18 @@ def switch_mode(reason: str = "", new_focus: str = "") -> str:
     return f"Mode switch requested: {reason}. New focus: {new_focus}"
 
 
+def planner_requires_confirmation() -> bool:
+    """Whether `planner` pauses for human approval (opt-in).
+
+    `planner` has no side effects: it records a plan and *narrows* the agent's
+    own future tool set (Ulysses Pact). Requiring confirmation therefore buys
+    no safety, and it stalls every client that cannot answer a confirmation
+    request mid-run (`/run`, A2A, CLI), where planning is the agent's first
+    step. Set DAK_PLANNER_REQUIRE_CONFIRMATION=true to get the old behaviour.
+    """
+    return os.getenv("DAK_PLANNER_REQUIRE_CONFIRMATION", "false").lower() == "true"
+
+
 def make_builtin_tools(enforcer_mode: bool = False) -> List[FunctionTool]:
     """Create the built-in control tools for the root agent.
 
@@ -83,7 +96,7 @@ def make_builtin_tools(enforcer_mode: bool = False) -> List[FunctionTool]:
     free-text responses are blocked.
     """
     tools = [
-        FunctionTool(planner, require_confirmation=True),
+        FunctionTool(planner, require_confirmation=planner_requires_confirmation()),
         FunctionTool(switch_mode, require_confirmation=False),
     ]
     if enforcer_mode:

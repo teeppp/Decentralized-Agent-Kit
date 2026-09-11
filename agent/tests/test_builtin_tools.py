@@ -1,5 +1,6 @@
+import os
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from dak_agent.builtin_tools import (
     ask_question,
@@ -20,6 +21,16 @@ class TestBuiltinTools(unittest.TestCase):
         tools = make_builtin_tools(enforcer_mode=True)
         names = [t.name for t in tools]
         self.assertEqual(names, ["planner", "switch_mode", "attempt_answer", "ask_question"])
+
+    def test_planner_does_not_block_on_confirmation_by_default(self):
+        """A confirmation-gated planner stalls /run and A2A runs (no UI to approve)."""
+        planner_tool = next(t for t in make_builtin_tools() if t.name == "planner")
+        self.assertFalse(planner_tool._require_confirmation)
+
+    @patch.dict(os.environ, {"DAK_PLANNER_REQUIRE_CONFIRMATION": "true"})
+    def test_planner_confirmation_is_opt_in(self):
+        planner_tool = next(t for t in make_builtin_tools() if t.name == "planner")
+        self.assertTrue(planner_tool._require_confirmation)
 
     def test_planner_formats_plan(self):
         result = planner("My task", ["step one", "step two"], allowed_tools=["read_file"])

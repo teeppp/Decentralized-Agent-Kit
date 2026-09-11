@@ -1,4 +1,8 @@
-"""Root agent assembly: feature flags + tool wiring for `adk web`."""
+"""Root agent assembly: feature flags + tool wiring for `adk web`.
+
+`adk web` prefers the module-level `app` (an ADK App carrying the context
+harness: compaction + plugins) and falls back to `root_agent`.
+"""
 import logging
 import os
 
@@ -9,6 +13,7 @@ from .patches import apply_patches, setup_telemetry
 apply_patches()
 setup_telemetry()
 
+from google.adk.apps import App
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools import FunctionTool
 from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
@@ -19,6 +24,13 @@ from .adaptive_agent import AdaptiveAgent
 from .builtin_tools import make_builtin_tools
 from .config import get_litellm_model_name
 from .enforcer import ENFORCER_INSTRUCTION, enforcer_validator
+from .harness import (
+    ContextHarnessPlugin,
+    HarnessSettings,
+    harness_enabled,
+    make_compaction_config,
+    make_read_tool_output_tool,
+)
 from .skill_tools import ALL_WALLET_TOOL_NAMES, load_solana_wallet_tools
 
 
@@ -59,6 +71,19 @@ else:
 # --- Model ---
 model_name = os.getenv("MODEL_NAME", os.getenv("GEMINI_MODEL_NAME", "gemini-3.7-flash"))
 formatted_model_name = get_litellm_model_name(model_name)
+model = LiteLlm(model=formatted_model_name)
+
+# --- Context harness (compaction + tool-output budget + request guard) ---
+use_harness = harness_enabled()
+harness_settings = HarnessSettings.from_env(formatted_model_name)
+if use_harness:
+    root_agent_tools.append(make_read_tool_output_tool(harness_settings.tool_output_chars))
+    logger.info(
+        "Context harness: window=%d tokens, compaction at %d, tool output <= %d chars",
+        harness_settings.context_window,
+        harness_settings.compaction_token_threshold,
+        harness_settings.tool_output_chars,
+    )
 
 # --- A2A sub-agents (Consumer mode) ---
 a2a_sub_agents = get_a2a_sub_agents()
@@ -73,7 +98,7 @@ if skills_dirs_env:
     logger.info(f"Configured skill directories: {skills_dirs}")
 
 root_agent = AdaptiveAgent(
-    model=LiteLlm(model=formatted_model_name),
+    model=model,
     name="dak_agent",
     instruction=instruction,
     tools=root_agent_tools,
@@ -81,4 +106,11 @@ root_agent = AdaptiveAgent(
     after_model_callback=after_model_callback,
     mcp_url=mcp_url,
     skills_dirs=skills_dirs,
+)
+
+app = App(
+    name="dak_agent",
+    root_agent=root_agent,
+    plugins=[ContextHarnessPlugin(harness_settings)] if use_harness else [],
+    events_compaction_config=make_compaction_config(harness_settings, llm=model) if use_harness else None,
 )

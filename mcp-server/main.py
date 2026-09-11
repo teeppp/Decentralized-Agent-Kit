@@ -10,6 +10,26 @@ import uvicorn
 # Initialize FastMCP server with recommended settings
 mcp = FastMCP("dak-agent-mcp", json_response=True)
 
+# Output bounds: an unbounded tool result (a whole file, a recursive listing)
+# can overflow the calling model's context window in one call. Tools return at
+# most this much and tell the caller how to fetch the rest.
+MAX_OUTPUT_CHARS = int(os.getenv("MCP_MAX_OUTPUT_CHARS", "50000"))
+MAX_LIST_ENTRIES = int(os.getenv("MCP_MAX_LIST_ENTRIES", "500"))
+
+
+def _cap_text(text: str, hint: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n\n[truncated: {len(text) - limit} more chars. {hint}]"
+
+
+def _cap_entries(entries: list, hint: str, limit: int = MAX_LIST_ENTRIES) -> str:
+    if len(entries) <= limit:
+        return "\n".join(entries)
+    shown = "\n".join(entries[:limit])
+    return f"{shown}\n\n[truncated: {len(entries) - limit} more entries. {hint}]"
+
+
 @mcp.tool()
 async def deep_think(thought: str) -> str:
     """
@@ -20,17 +40,31 @@ async def deep_think(thought: str) -> str:
     return thought
 
 @mcp.tool()
-async def read_file(path: str) -> str:
+async def read_file(path: str, offset: int = 0, limit: int = 0) -> str:
     """
-    Read the content of a file.
+    Read the content of a file. For large files, read a range of lines.
     Args:
         path: The path to the file to read (relative to /projects).
+        offset: 0-based line number to start reading from (default: 0).
+        limit: Maximum number of lines to return (default: 0 = to the end of the file).
     """
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return f.read()
+            content = f.read()
     except Exception as e:
         return f"Error reading file: {e}"
+    if offset > 0 or limit > 0:
+        lines = content.splitlines(keepends=True)
+        start = max(0, offset)
+        end = start + limit if limit > 0 else len(lines)
+        content = "".join(lines[start:end])
+        total_lines = len(lines)
+    else:
+        total_lines = content.count("\n") + 1
+    return _cap_text(
+        content,
+        f"The file has {total_lines} lines; call read_file(path, offset=<line>, limit=<lines>) to read a range.",
+    )
 
 @mcp.tool()
 async def write_file(path: str, content: str) -> str:
@@ -57,8 +91,8 @@ async def list_files(path: str = ".") -> str:
         path: The directory path to list (default: current directory).
     """
     try:
-        items = os.listdir(path)
-        return "\n".join(items)
+        items = sorted(os.listdir(path))
+        return _cap_entries(items, "List a subdirectory or use search_files with a pattern.")
     except Exception as e:
         return f"Error listing files: {e}"
 
@@ -80,7 +114,7 @@ async def run_command(command: str) -> str:
         output = f"Stdout:\n{result.stdout}\n"
         if result.stderr:
             output += f"\nStderr:\n{result.stderr}"
-        return output
+        return _cap_text(output, "Narrow the command output (e.g. pipe through head, tail or grep).")
     except subprocess.TimeoutExpired:
         return "Error: Command timed out"
     except Exception as e:
@@ -100,7 +134,7 @@ async def search_files(pattern: str, path: str = ".") -> str:
             for file in files:
                 if glob.fnmatch.fnmatch(file, pattern):
                     matches.append(os.path.join(root, file))
-        return "\n".join(matches)
+        return _cap_entries(matches, "Use a more specific pattern or path.")
     except Exception as e:
         return f"Error searching files: {e}"
 

@@ -9,7 +9,7 @@ Claude Code 向けのリポジトリ・ガイド。エージェント全般の�
 
 | dir | 役割 | ポート(host) |
 |-----|------|------|
-| `agent/` | google-adk ベースのコアエージェント（`dak_agent/`）。A2A + MCP + adaptive mode | 8000 |
+| `agent/` | google-adk ベースのコアエージェント（`dak_agent/`）。A2A + MCP + adaptive mode + コンテキストハーネス（`harness.py`, `docs/architecture/harness_engineering.md`） | 8000 |
 | `mcp-server/` | FastMCP ツールサーバ（`main.py`, `policy.py` の安全層） | 8001 |
 | `bff/` | HTMX 用 Backend-for-Frontend（FastAPI） | 8002 |
 | `cli/` | `dak-cli`（Typer/Rich） | — |

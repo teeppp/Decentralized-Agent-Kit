@@ -86,7 +86,7 @@ flowchart TD
     Reset --> Forward
 ```
 
-1.  **Trigger**: The conversation context exceeds the token threshold (default 50% of model context window) OR the agent explicitly calls `switch_mode`.
+1.  **Trigger**: The agent explicitly calls `switch_mode`. (Context-window pressure is no longer a trigger: it is handled by the context harness — ADK events compaction plus tool-output budgets — see [architecture/harness_engineering.md](architecture/harness_engineering.md).)
 2.  **Tool Discovery**: The agent has a built-in tool `list_available_tools` that dynamically queries the MCP server to find out what capabilities are available. This is often the first step before switching modes.
 3.  **Meta-Analysis**: The `ModeManager` sends the conversation summary and list of *all* available tools to the LLM.
 4.  **Reconfiguration**: The LLM returns:
@@ -125,13 +125,11 @@ To truly verify that the tools are restricted:
 
 ## Configuration
 
-Thresholds are defined in `agent/dak_agent/mode_manager.py`:
-
-```python
-self.token_threshold = 0.5  # 50% threshold
-```
+Mode switching has no token threshold. Context budgets (compaction threshold,
+tool-output limits) are configured through the context harness; see
+[architecture/harness_engineering.md](architecture/harness_engineering.md).
 
 ## Future Improvements
 
-- **Context Pruning**: Instead of just changing the prompt, we should summarize and *truncate* the history so the model genuinely forgets the old context.
+- **Context Pruning**: Done by the context harness (ADK token-threshold compaction summarizes and replaces old history), not by the mode switch.
 - **Explicit Tool Denial**: The new System Prompt should explicitly state: "You ONLY have access to tools X and Y. Do not attempt to use others."

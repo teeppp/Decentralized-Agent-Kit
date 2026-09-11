@@ -22,31 +22,22 @@ class TestAdaptiveAgentRefinement:
 
     @patch('dak_agent.mode_manager.ModeManager.generate_mode_config')
     @pytest.mark.asyncio
-    async def test_history_clearing_on_switch(self, mock_generate_config):
-        # Setup mock return for generate_mode_config
+    async def test_history_preserved_on_switch(self, mock_generate_config):
+        """A mode switch swaps instruction/tools but leaves session history to
+        the context harness (ADK compaction) instead of wiping it."""
         mock_generate_config.return_value = ("New Instruction", ["test_tool"], [])
-        
-        # Setup mock context with session history
+
         mock_context = MagicMock(spec=CallbackContext)
         mock_context.session = MagicMock()
-        # Mock contents as a MagicMock that behaves like a list but tracks calls
-        mock_contents = MagicMock(spec=list)
-        mock_contents.__iter__.return_value = ["Old Message 1", "Old Message 2"]
-        mock_context.session.contents = mock_contents
-        
-        # Trigger switch manually via internal method for testing
-        # We need to mock _extract_history_summary as well
+        events = [MagicMock(), MagicMock()]
+        mock_context.session.events = events
+
         with patch.object(self.agent, '_extract_history_summary', return_value="Summary"):
             await self.agent._perform_mode_switch(mock_context)
-            
-        # Verify instruction updated
+
         assert self.agent.instruction == "New Instruction"
-        
-        # Verify history cleared
-        # Note: In the actual code we check if it's a list and clear it
-        # Here we verify the clear method was called on the mock list
-        mock_context.session.contents.clear.assert_called_once()
-        
+        assert mock_context.session.events == events
+
     @pytest.mark.asyncio
     async def test_switch_mode_tool_preservation(self):
         # Ensure switch_mode is in builtin tools

@@ -121,6 +121,40 @@ class TestMCPTools(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("file2.txt", result)
             self.assertNotIn("README.md", result)
 
+    async def test_read_file_line_range(self):
+        """read_file returns only the requested line range."""
+        content = "".join(f"line{i}\n" for i in range(10))
+        with patch('builtins.open', mock_open(read_data=content)):
+            result = await main.read_file("/test/path.txt", offset=2, limit=3)
+        self.assertEqual(result, "line2\nline3\nline4\n")
+
+    async def test_read_file_caps_large_file(self):
+        """A file larger than the output bound is truncated with a range hint."""
+        content = "x" * (main.MAX_OUTPUT_CHARS + 10000)
+        with patch('builtins.open', mock_open(read_data=content)):
+            result = await main.read_file("/test/big.txt")
+        self.assertLess(len(result), len(content))
+        self.assertIn("truncated: 10000 more chars", result)
+        self.assertIn("offset=", result)
+
+    async def test_list_files_caps_entries(self):
+        """Huge directories are listed up to the entry bound."""
+        items = [f"f{i:05d}" for i in range(main.MAX_LIST_ENTRIES + 7)]
+        with patch('os.listdir', return_value=items):
+            result = await main.list_files("/test/dir")
+        self.assertIn("truncated: 7 more entries", result)
+        self.assertNotIn(items[-1], result)
+
+    async def test_run_command_caps_output(self):
+        """Command output beyond the bound is truncated with a narrowing hint."""
+        mock_result = MagicMock()
+        mock_result.stdout = "y" * (main.MAX_OUTPUT_CHARS + 50)
+        mock_result.stderr = ""
+        with patch('subprocess.run', return_value=mock_result):
+            result = await main.run_command("cat big")
+        self.assertIn("truncated:", result)
+        self.assertIn("head, tail or grep", result)
+
     async def test_search_files_error(self):
         """Test search_files handles errors gracefully."""
         with patch('os.walk', side_effect=PermissionError("Permission denied")):
