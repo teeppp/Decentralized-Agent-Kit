@@ -114,16 +114,18 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
 
 ## 4. 残りのギャップとバックログ（優先度順）
 
+各項目は GitHub Issue 化して Project (DAK Sustainability) で管理している。
+
 | 優先 | 項目 | 狙い | 関連 |
 |---|---|---|---|
-| P1 | **調査用サブエージェント（`AgentTool`）** | 「リポジトリを読んで要約」を子エージェントに任せ、親のコンテキストには結論だけを残す（Deep Agents の `task`、Claude Code の Explore 相当）。長い調査タスクで最も効く | — |
-| P1 | **内容検索ツール（grep）と行番号付き読み込み** | 今の `search_files` はファイル名しか検索できず、中身を探すにはファイル全体を読むしかない。`grep(pattern, path, glob)` と `edit_file`（文字列置換）を足すか、ADK `EnvironmentToolset` への移行を検討 | #16, #20 |
-| P1 | **TODO ツール（セッション state に保存）** | `write_todos` 相当。圧縮後も計画が消えないよう state に置き、指示へ注入する。今の `planner` は `require_confirmation=True` のため、「計画を立てる」だけで毎回承認待ちになり、A2A や `/run` 経由の自律実行が止まる（実機で確認） | #21 |
-| P2 | **コンテキスト超過からの回復** | `on_model_error_callback` で `ContextWindowExceededError` を受けたら、強制圧縮して再試行するか、利用者に分かる形で失敗させる | — |
-| P2 | **窓サイズの自動検出** | llama-server の `/props`（`n_ctx`）から窓を取る。compose 既定の 8192 と実サーバーの 32768 のようなずれを防ぐ | — |
-| P2 | **`SkillToolset` への移行** | 独自の `SkillRegistry`/`enable_skill` を ADK 標準（Agent Skills 仕様・段階的開示・リソース読み込み）に寄せ、保守コストを下げる | #81 |
-| P2 | **ツール失敗の自己修正** | `ReflectAndRetryToolPlugin` を試す | — |
-| P2 | **モード切替の整理** | 圧縮とスキルで役割の多くが代替されたので、Meta-LLM によるモード切替を残すかどうかを評価で判断する（動的ツール削減 #81 と合わせて検討） | #81 |
-| P3 | **長時間タスクの評価** | nightly-eval に「リポジトリ調査」系の長いゴールデンシナリオを加え、窓超過率・圧縮回数・トークン数を Langfuse の指標で追う | #5, #71 |
-| P3 | **プロンプトキャッシュ** | `ContextCacheConfig`（Gemini/Anthropic）でコストと遅延を下げる | — |
+| P1 | **調査用サブエージェント（`AgentTool`）** | 「リポジトリを読んで要約」を子エージェントに任せ、親のコンテキストには結論だけを残す（Deep Agents の `task`、Claude Code の Explore 相当）。長い調査タスクで最も効く | #85 |
+| P1 | **内容検索ツール（grep）と行番号付き読み込み** | 今の `search_files` はファイル名しか検索できず、中身を探すにはファイル全体を読むしかない。`grep(pattern, path, glob)` と `edit_file`（文字列置換）を足すか、ADK `EnvironmentToolset` への移行を検討 | #86, #16, #20 |
+| P1 | **TODO ツール（セッション state に保存）** | `write_todos` 相当。圧縮後も計画が消えないよう state に置き、指示へ注入する。今の `planner` は `require_confirmation=True` のため、「計画を立てる」だけで毎回承認待ちになり、A2A や `/run` 経由の自律実行が止まる（実機で確認。本変更で承認は opt-in 化済み） | #87, #21 |
+| P2 | **コンテキスト超過からの回復** | `on_model_error_callback` で `ContextWindowExceededError` を受けたら、強制圧縮して再試行するか、利用者に分かる形で失敗させる | #88 |
+| P2 | **窓サイズの自動検出** | llama-server の `/props`（`n_ctx`）から窓を取る。compose 既定の 8192 と実サーバーの 32768 のようなずれを防ぐ | #89 |
+| P2 | **`SkillToolset` への移行** | 独自の `SkillRegistry`/`enable_skill` を ADK 標準（Agent Skills 仕様・段階的開示・リソース読み込み）に寄せ、保守コストを下げる | #90, #81 |
+| P2 | **ツール失敗の自己修正** | `ReflectAndRetryToolPlugin` を試す | #91 |
+| P2 | **モード切替の整理** | 圧縮とスキルで役割の多くが代替されたので、Meta-LLM によるモード切替を残すかどうかを評価で判断する（動的ツール削減 #81 と合わせて検討） | #92, #81 |
+| P3 | **長時間タスクの評価** | nightly-eval に「リポジトリ調査」系の長いゴールデンシナリオを加え、窓超過率・圧縮回数・トークン数を Langfuse の指標で追う | #93, #5, #71 |
+| P3 | **プロンプトキャッシュ** | `ContextCacheConfig`（Gemini/Anthropic）でコストと遅延を下げる | #94 |
 | P3 | **サンドボックス** | ファイル・コマンド系ツールの分離 | #20, #31, #43, #80 |
