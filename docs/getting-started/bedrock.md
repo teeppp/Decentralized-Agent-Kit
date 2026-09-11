@@ -56,8 +56,8 @@ MODEL_NAME=bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0 docker compose up
 
 ## コンテキストウィンドウ
 
-動的モード切替（`docs/dynamic_mode_switching.md`）はモデルのコンテキスト長 50% で
-発火する。コンテキスト長は litellm のモデルマップ（`litellm.get_model_info`）から
+コンテキストハーネス（`docs/architecture/harness_engineering.md`）はモデルのコンテキスト長から
+圧縮閾値（既定 60%）やツール出力上限を算出する。コンテキスト長は litellm のモデルマップ（`litellm.get_model_info`）から
 自動解決されるので、Bedrock の inference-profile ID もそのまま実際の値になる。
 マップに無いモデルは保守的に 128K 扱いになるだけで、動作は壊れない
 （`agent/dak_agent/mode_manager.py`）。

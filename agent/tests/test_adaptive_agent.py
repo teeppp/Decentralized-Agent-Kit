@@ -58,7 +58,7 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
 
         # Simulate callback (first turn)
         context = MagicMock()
-        context.session.contents = []
+        context.session.events = []
         await agent._wrapped_callback(llm_response=MagicMock(), callback_context=context)
 
         # Verify Switch DID NOT happen (instruction remains same)
@@ -71,41 +71,41 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(agent._mode_manager._is_first_turn)
 
     @patch("dak_agent.mode_manager.ModeManager.generate_mode_config")
-    async def test_token_threshold_trigger(self, mock_generate_config):
-        """Test that exceeding token threshold triggers a switch."""
+    async def test_large_context_does_not_trigger_switch(self, mock_generate_config):
+        """Context pressure is the harness's job (ADK compaction), not a mode switch."""
         agent = AdaptiveAgent(
             model="test-model",
             name="test_agent",
             instruction="Initial instruction",
             tools=self.mock_tools
         )
-
-        # Bypass initial turn trigger
         agent._mode_manager._is_first_turn = False
 
-        # Set a low max token count for testing
-        agent._mode_manager.max_context_tokens = 100
-        agent._mode_manager.token_threshold = 0.5 # 50 tokens
-
-        # Mock generate_config
-        mock_generate_config.return_value = ("New Instruction", [self.mock_tools[0]], [])
-
-        # Simulate callback with heavy context
+        event = MagicMock()
+        event.content.parts = [MagicMock(text="a" * 1_000_000)]
         context = MagicMock()
-        # Create content that exceeds threshold (approx 4 chars per token)
-        # 60 tokens * 4 = 240 chars
-        heavy_text = "a" * 240
-        mock_part = MagicMock()
-        mock_part.text = heavy_text
-        mock_content = MagicMock()
-        mock_content.parts = [mock_part]
-        context.session.contents = [mock_content]
+        context.session.events = [event]
 
         await agent._wrapped_callback(llm_response=MagicMock(), callback_context=context)
 
-        # Verify Switch happened
-        self.assertEqual(agent.instruction, "New Instruction")
-        mock_generate_config.assert_called_once()
+        self.assertEqual(agent.instruction, "Initial instruction")
+        mock_generate_config.assert_not_called()
+        self.assertEqual(len(context.session.events), 1)
+
+    def test_history_summary_reads_session_events(self):
+        """ADK sessions keep history in `events`; the summary must read them."""
+        agent = AdaptiveAgent(
+            model="test-model",
+            name="test_agent",
+            instruction="Initial instruction",
+            tools=self.mock_tools
+        )
+        event = MagicMock()
+        event.content.parts = [MagicMock(text="please review the repo")]
+        context = MagicMock()
+        context.session.events = [event]
+
+        self.assertIn("please review the repo", agent._extract_history_summary(context))
 
     @patch("dak_agent.mode_manager.ModeManager.generate_mode_config")
     async def test_switch_mode_tool_trigger(self, mock_generate_config):
@@ -132,7 +132,7 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         llm_response.content.parts = [mock_part]
 
         context = MagicMock()
-        context.session.contents = []
+        context.session.events = []
 
         await agent._wrapped_callback(llm_response=llm_response, callback_context=context)
 

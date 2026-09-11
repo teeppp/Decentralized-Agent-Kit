@@ -71,6 +71,7 @@ class TestMCPTools(unittest.IsolatedAsyncioTestCase):
     async def test_run_command_success(self):
         """Test run_command executes commands successfully."""
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "Command output"
         mock_result.stderr = ""
         
@@ -83,6 +84,7 @@ class TestMCPTools(unittest.IsolatedAsyncioTestCase):
     async def test_run_command_with_stderr(self):
         """Test run_command includes stderr in output."""
         mock_result = MagicMock()
+        mock_result.returncode = 1
         mock_result.stdout = "Output"
         mock_result.stderr = "Error message"
         
@@ -120,6 +122,70 @@ class TestMCPTools(unittest.IsolatedAsyncioTestCase):
             self.assertIn("file3.py", result)
             self.assertNotIn("file2.txt", result)
             self.assertNotIn("README.md", result)
+
+    async def test_read_file_line_range(self):
+        """read_file returns only the requested line range."""
+        content = "".join(f"line{i}\n" for i in range(10))
+        with patch('builtins.open', mock_open(read_data=content)):
+            result = await main.read_file("/test/path.txt", offset=2, limit=3)
+        self.assertEqual(result, "line2\nline3\nline4\n")
+
+    async def test_read_file_caps_large_file(self):
+        """A file larger than the output bound is truncated with a range hint."""
+        content = "x" * (main.MAX_OUTPUT_CHARS + 10000)
+        with patch('builtins.open', mock_open(read_data=content)):
+            result = await main.read_file("/test/big.txt")
+        self.assertLess(len(result), len(content))
+        self.assertIn("truncated: 10000 more chars", result)
+        self.assertIn("offset=", result)
+
+    async def test_read_file_reports_line_count_consistently(self):
+        """The hint's line count must match what the range branch sees, or the
+        model asks for an offset past the end."""
+        content = "".join(f"{'x' * 200}\n" for _ in range(400))  # 400 lines, > cap
+        with patch('builtins.open', mock_open(read_data=content)):
+            result = await main.read_file("/test/big.txt")
+        self.assertIn("has 400 lines", result)
+
+    async def test_env_bounds_ignore_invalid_values(self):
+        """A typo in MCP_MAX_OUTPUT_CHARS must not crash the server at import."""
+        with patch.dict(os.environ, {"MCP_MAX_OUTPUT_CHARS": "lots"}):
+            self.assertEqual(main._env_int("MCP_MAX_OUTPUT_CHARS", 50000), 50000)
+        with patch.dict(os.environ, {"MCP_MAX_LIST_ENTRIES": "-3"}):
+            self.assertEqual(main._env_int("MCP_MAX_LIST_ENTRIES", 500), 500)
+        with patch.dict(os.environ, {"MCP_MAX_LIST_ENTRIES": "42"}):
+            self.assertEqual(main._env_int("MCP_MAX_LIST_ENTRIES", 500), 42)
+
+    async def test_list_files_caps_entries(self):
+        """Huge directories are listed up to the entry bound."""
+        items = [f"f{i:05d}" for i in range(main.MAX_LIST_ENTRIES + 7)]
+        with patch('os.listdir', return_value=items):
+            result = await main.list_files("/test/dir")
+        self.assertIn("truncated: 7 more entries", result)
+        self.assertNotIn(items[-1], result)
+
+    async def test_run_command_keeps_stderr_when_stdout_is_huge(self):
+        """A failure must stay visible even when stdout floods the output bound."""
+        mock_result = MagicMock()
+        mock_result.returncode = 2
+        mock_result.stdout = "y" * (main.MAX_OUTPUT_CHARS + 10_000)
+        mock_result.stderr = "fatal: something broke"
+        with patch('subprocess.run', return_value=mock_result):
+            result = await main.run_command("build")
+        self.assertIn("fatal: something broke", result)
+        self.assertIn("Exit code: 2", result)
+        self.assertIn("truncated: 10000 more chars", result)
+
+    async def test_run_command_caps_output(self):
+        """Command output beyond the bound is truncated with a narrowing hint."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "y" * (main.MAX_OUTPUT_CHARS + 50)
+        mock_result.stderr = ""
+        with patch('subprocess.run', return_value=mock_result):
+            result = await main.run_command("cat big")
+        self.assertIn("truncated:", result)
+        self.assertIn("head, tail or grep", result)
 
     async def test_search_files_error(self):
         """Test search_files handles errors gracefully."""

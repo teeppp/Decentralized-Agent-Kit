@@ -35,7 +35,8 @@ class TestGenericEscapeHatch(unittest.TestCase):
         # Check for key phrases in the prompt
         self.assertIn("If the user requests an action that requires tools you do not currently have", prompt_sent)
         self.assertIn("MUST follow this 2-step process", prompt_sent)
-        self.assertIn("Call `switch_mode(request_tool_list=True)`", prompt_sent)
+        self.assertIn("Call `list_skills`", prompt_sent)
+        self.assertNotIn("request_tool_list", prompt_sent)  # switch_mode has no such parameter
 
         # Verify NO specific categories are mentioned
         self.assertNotIn("Capability Summary", prompt_sent)

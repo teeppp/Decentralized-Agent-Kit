@@ -15,17 +15,17 @@ class ModeManager:
     1. A specific System Instruction (Prompt).
     2. A specific set of Allowed Tools.
     
-    Triggers:
-    - Initial request (first turn of session)
-    - Token count exceeds threshold (50% of max)
-    - LLM calls `switch_mode` tool
+    Trigger: the LLM calls the `switch_mode` tool (never on the first turn).
+
+    Context-window pressure is NOT handled here: the context harness
+    (harness.py + ADK events compaction) owns that.
     """
-    
+
     # Context-window sizes normally come from litellm's model map (see
     # _lookup_max_tokens). This table only overrides models the pinned litellm
     # doesn't know yet, plus the conservative default for unknown/local models
-    # (a too-small value just makes the mode switch trigger earlier; a
-    # too-large one would let the context overflow before it ever fires).
+    # (a too-small value just makes compaction trigger earlier; a too-large
+    # one would let the context overflow before it ever fires).
     MODEL_MAX_TOKENS = {
         # Newer than the pinned litellm's model map; drop once litellm knows it.
         "gemini-3.7-flash": 1000000,
@@ -34,14 +34,13 @@ class ModeManager:
 
     def __init__(self, model_name: str = "gemini-3.7-flash"):
         self.model_name = model_name
-        self.max_context_tokens = self._configured_max_tokens(model_name)
-        self.token_threshold = 0.5  # 50% threshold
+        self.max_context_tokens = self.resolve_context_window(model_name)
         self._is_first_turn = True
         self._switch_requested = False
         self._requested_focus: Optional[str] = None
 
     @classmethod
-    def _configured_max_tokens(cls, model_name: str) -> int:
+    def resolve_context_window(cls, model_name: str) -> int:
         """Resolve the context limit, allowing self-hosted endpoints to state it.
 
         A llama-server alias is intentionally provider-neutral and therefore is
@@ -84,36 +83,24 @@ class ModeManager:
             )
         return cls.MODEL_MAX_TOKENS["default"]
 
-    def should_switch(self, context_token_count: int = 0) -> bool:
+    def should_switch(self) -> bool:
+        """Decide whether to switch modes after a model response.
+
+        Only an explicit `switch_mode` call triggers a switch; the first turn
+        always keeps the default minimal toolset.
         """
-        Decides if a mode switch is necessary.
-        
-        Triggers:
-        1. First turn of session (initial mode setup)
-        2. Token count >= 50% of max context
-        3. LLM explicitly requested switch via switch_mode tool
-        """
-        # Trigger 1: Initial request
         if self._is_first_turn:
             logger.info("First turn: Using default minimal toolset (no mode switch).")
             self._is_first_turn = False
             return False
-        
-        # Trigger 2: Token threshold exceeded
-        if context_token_count > 0:
-            usage_ratio = context_token_count / self.max_context_tokens
-            if usage_ratio >= self.token_threshold:
-                logger.info(f"Mode Switch Triggered: Token usage ({usage_ratio:.1%}) >= threshold ({self.token_threshold:.0%})")
-                return True
-        
-        # Trigger 3: LLM requested switch
+
         if self._switch_requested:
             logger.info("Mode Switch Triggered: LLM requested via switch_mode tool")
             self._switch_requested = False
             return True
-        
+
         return False
-    
+
     def request_switch(self, reason: str, new_focus: str):
         """Called when LLM uses the switch_mode tool."""
         logger.info(f"Switch requested by LLM. Reason: {reason}, New focus: {new_focus}")
@@ -197,12 +184,12 @@ Skills are modular capabilities that provide specialized instructions and best p
 1. Analyze the current situation. What is the immediate next step?
 2. Write a CONCISE System Instruction for the agent to focus ONLY on this next step.
    - The instruction should be specific, not generic.
-   - It MUST summarize the relevant past context so the agent knows what happened, as the previous history will be cleared.
+   - It MUST summarize the relevant past context so the agent knows what happened (older history may be compacted).
    - Do NOT mention "context is full" or "switching modes". Just describe the role and the current objective.
    - **CRITICAL**: Append this standard instruction at the end:
      "If the user requests an action that requires tools you do not currently have, you MUST follow this 2-step process:
-      1. Call `switch_mode(request_tool_list=True)` to see ALL available tools and skills.
-      2. Review the list and call `switch_mode(reason='...', new_focus='...')` to switch to the correct mode.
+      1. Call `list_skills` to see ALL available tools and skills.
+      2. Review the list and call `enable_skill(skill_name='...')` or `switch_mode(reason='...', new_focus='...')` to get the correct tools.
       Do NOT guess tool names. Do NOT try to call tools that are not in your list."
 3. Select ONLY the strictly necessary tools from the list above.
    - Fewer tools = better focus.

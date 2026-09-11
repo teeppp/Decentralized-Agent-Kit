@@ -37,8 +37,9 @@ LLAMACPP_CONTEXT_SIZE=8192
 
 `LLAMACPP_MODEL_NAME` にはLiteLLMがOpenAI互換APIを使うための `openai/` prefixを
 付ける。`LLAMACPP_CONTEXT_SIZE` はサーバー起動時のcontext sizeと一致させる。
-DAKはこの値をモード切替・コンテキスト圧縮の判断に使うため、サーバーより大きい
-値を設定しないこと。llama.cppサーバーの配置やモデル管理はDAKの対象外となる。
+DAKはこの値からコンテキストハーネスの予算（圧縮閾値・ツール出力上限・リクエスト上限、
+[harness_engineering.md](../architecture/harness_engineering.md)）を算出するため、サーバーより大きい
+値を設定しないこと（実際の値は `curl http://127.0.0.1:18080/props` の `n_ctx` で確認できる）。llama.cppサーバーの配置やモデル管理はDAKの対象外となる。
 
 ## マシン別セットアップ
 

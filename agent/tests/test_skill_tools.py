@@ -99,3 +99,27 @@ class TestLoadSolanaWalletTools(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSyncToLiveAgent(unittest.TestCase):
+    def test_shares_tools_instruction_and_active_skills(self):
+        """ADK v2 runs on a per-invocation copy of the agent; enabled skills must
+        reach that copy (active_skills is a read-only property)."""
+        from unittest.mock import MagicMock
+
+        from dak_agent.adaptive_agent import AdaptiveAgent
+        from dak_agent.skill_tools import _sync_to_live_agent
+
+        root = AdaptiveAgent(model="test-model", name="root", instruction="base", tools=[])
+        live = root.model_copy()
+        root.instruction += "\n# Skill: filesystem"
+        root.active_skills.append("filesystem")
+
+        ctx = MagicMock()
+        ctx._invocation_context.agent = live
+        with self.assertNoLogs("dak_agent.skill_tools", level="WARNING"):
+            _sync_to_live_agent(ctx, root)
+
+        self.assertEqual(live.instruction, root.instruction)
+        self.assertIs(live.tools, root.tools)
+        self.assertEqual(live.active_skills, ["filesystem"])

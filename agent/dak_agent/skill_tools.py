@@ -51,8 +51,9 @@ def _sync_to_live_agent(tool_context, source_agent) -> None:
     try:
         live.tools = source_agent.tools
         live.instruction = source_agent.instruction
-        if hasattr(source_agent, "active_skills"):
-            live.active_skills = source_agent.active_skills
+        # `active_skills` is a read-only property; share the backing list.
+        if hasattr(source_agent, "_active_skills"):
+            live._active_skills = source_agent._active_skills
     except Exception as e:
         logger.warning("Could not sync enabled skill to live agent: %s", e)
 

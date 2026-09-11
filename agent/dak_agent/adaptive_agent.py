@@ -184,9 +184,9 @@ class AdaptiveAgent(LlmAgent):
             # 2. Record any switch_mode tool call
             self._check_for_switch_request(llm_response)
 
-            # 3. Switch modes if requested or the context is filling up
-            context_token_count = self._estimate_context_tokens(callback_context)
-            if not self._disable_mode_switching and self._mode_manager.should_switch(context_token_count):
+            # 3. Switch modes if the LLM asked for it. Context-window pressure is
+            #    handled by the context harness (ADK compaction), not here.
+            if not self._disable_mode_switching and self._mode_manager.should_switch():
                 await self._perform_mode_switch(callback_context)
 
             return None
@@ -206,27 +206,11 @@ class AdaptiveAgent(LlmAgent):
                             new_focus=args.get("new_focus", ""),
                         )
 
-    def _estimate_context_tokens(self, callback_context: CallbackContext) -> int:
-        """Rough token estimate of the session history (~4 chars per token)."""
-        try:
-            contents = self._session_contents(callback_context)
-            total_chars = 0
-            for content in contents:
-                for part in getattr(content, "parts", []) or []:
-                    text = getattr(part, "text", None)
-                    if text:
-                        total_chars += len(text)
-            return total_chars // 4
-        except Exception as e:
-            logger.warning(f"Could not estimate token count: {e}")
-        return 0
-
     def _extract_history_summary(self, context: CallbackContext) -> str:
         """Extract a short summary of the recent conversation history."""
         try:
-            contents = self._session_contents(context)
             messages = []
-            for content in contents[-5:]:
+            for content in self._session_contents(context)[-5:]:
                 for part in getattr(content, "parts", []) or []:
                     text = getattr(part, "text", None)
                     if text:
@@ -239,21 +223,20 @@ class AdaptiveAgent(LlmAgent):
 
     @staticmethod
     def _session_contents(context: CallbackContext) -> list:
+        """Contents of the session's events (ADK sessions store `events`)."""
         session = getattr(context, "session", None)
-        if session is None:
+        events = getattr(session, "events", None) if session is not None else None
+        if not isinstance(events, list):
             return []
-        if hasattr(session, "contents"):
-            return session.contents or []
-        if hasattr(session, "history"):
-            return session.history or []
-        return []
+        return [event.content for event in events if getattr(event, "content", None) is not None]
 
     async def _perform_mode_switch(self, context: CallbackContext):
         """
         Executes the mode switch:
         1. Generates a new config (instruction + tool/skill selection) via the Meta-Agent.
         2. Rebuilds the toolset: built-ins + a filtered McpToolset.
-        3. Clears the session history (the new instruction carries the summary).
+
+        Session history is left intact; the context harness compacts it.
         """
         try:
             logger.info("Initiating Mode Switch...")
@@ -343,16 +326,6 @@ class AdaptiveAgent(LlmAgent):
                 context._invocation_context.canonical_tools_cache = None
             except Exception:
                 pass
-
-            # Clear the session history: the model should rely only on the new
-            # instruction (which contains the summary) and tools.
-            session = getattr(context, "session", None)
-            if session is not None and hasattr(session, "contents"):
-                if isinstance(session.contents, list):
-                    session.contents.clear()
-                    logger.info("Session history cleared.")
-                else:
-                    logger.warning("Could not clear session history: contents is not a list.")
 
         except Exception as e:
             # Never crash the agent on a failed switch
