@@ -191,6 +191,19 @@ class TestRequestBudgetGuard:
         assert old.parts[0].function_response.response["result"] == "z" * 4000
 
 
+    def test_never_guts_the_compaction_summary(self):
+        """The summary is a model-role text part; eliding it would drop the task
+        the request has just been told to continue."""
+        summary = types.Content(role="model", parts=[types.Part(text="User request: " + "s" * 3000)])
+        request = LlmRequest(contents=[summary, _fr("a", 4000), _fr("b", 4000),
+                                       types.Content(role="user", parts=[types.Part(text="hi")])])
+
+        fit_request_to_budget(request, budget_tokens=10, keep_last=1)
+
+        assert request.contents[0] is summary
+        assert len(summary.parts[0].text) == len("User request: ") + 3000
+
+
 class TestEnsureUserQuery:
     def test_inserts_user_turn_when_only_model_and_tool_turns_remain(self):
         summary = types.Content(role="model", parts=[types.Part(text="User request: ...")])

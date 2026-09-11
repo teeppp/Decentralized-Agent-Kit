@@ -355,6 +355,10 @@ def fit_request_to_budget(llm_request, budget_tokens: int, keep_last: int = 2) -
             if total <= budget_tokens:
                 break
             content = contents[index]
+            if kind == "text" and content.role == "model":
+                # Model turns carry the compaction summary that `ensure_user_query`
+                # just told the model to continue from; gutting it loses the task.
+                continue
             new_parts = []
             changed = False
             for part in content.parts or []:

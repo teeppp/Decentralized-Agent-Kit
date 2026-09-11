@@ -13,8 +13,23 @@ mcp = FastMCP("dak-agent-mcp", json_response=True)
 # Output bounds: an unbounded tool result (a whole file, a recursive listing)
 # can overflow the calling model's context window in one call. Tools return at
 # most this much and tell the caller how to fetch the rest.
-MAX_OUTPUT_CHARS = int(os.getenv("MCP_MAX_OUTPUT_CHARS", "50000"))
-MAX_LIST_ENTRIES = int(os.getenv("MCP_MAX_LIST_ENTRIES", "500"))
+def _env_int(name: str, default: int) -> int:
+    """Read a positive int from the environment; a bad value must not crash the server."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+        if value <= 0:
+            raise ValueError
+        return value
+    except ValueError:
+        print(f"Warning: ignoring invalid {name}={raw!r}; using {default}.")
+        return default
+
+
+MAX_OUTPUT_CHARS = _env_int("MCP_MAX_OUTPUT_CHARS", 50000)
+MAX_LIST_ENTRIES = _env_int("MCP_MAX_LIST_ENTRIES", 500)
 
 
 def _cap_text(text: str, hint: str, limit: int = MAX_OUTPUT_CHARS) -> str:
@@ -53,14 +68,12 @@ async def read_file(path: str, offset: int = 0, limit: int = 0) -> str:
             content = f.read()
     except Exception as e:
         return f"Error reading file: {e}"
+    lines = content.splitlines(keepends=True)
+    total_lines = len(lines)
     if offset > 0 or limit > 0:
-        lines = content.splitlines(keepends=True)
         start = max(0, offset)
-        end = start + limit if limit > 0 else len(lines)
+        end = start + limit if limit > 0 else total_lines
         content = "".join(lines[start:end])
-        total_lines = len(lines)
-    else:
-        total_lines = content.count("\n") + 1
     return _cap_text(
         content,
         f"The file has {total_lines} lines; call read_file(path, offset=<line>, limit=<lines>) to read a range.",
@@ -111,10 +124,13 @@ async def run_command(command: str) -> str:
             text=True, 
             timeout=60
         )
-        output = f"Stdout:\n{result.stdout}\n"
+        # Cap each stream on its own: capping the concatenation would drop the
+        # stderr of a command that wrote a lot to stdout before failing.
+        hint = "Narrow the command output (e.g. pipe through head, tail or grep)."
+        output = f"Exit code: {result.returncode}\nStdout:\n{_cap_text(result.stdout, hint)}\n"
         if result.stderr:
-            output += f"\nStderr:\n{result.stderr}"
-        return _cap_text(output, "Narrow the command output (e.g. pipe through head, tail or grep).")
+            output += f"\nStderr:\n{_cap_text(result.stderr, hint)}"
+        return output
     except subprocess.TimeoutExpired:
         return "Error: Command timed out"
     except Exception as e:
