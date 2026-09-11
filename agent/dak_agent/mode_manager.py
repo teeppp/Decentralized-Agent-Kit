@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import List, Tuple, Any, Optional
 
 from . import meta_llm
@@ -33,11 +34,33 @@ class ModeManager:
 
     def __init__(self, model_name: str = "gemini-3.7-flash"):
         self.model_name = model_name
-        self.max_context_tokens = self._lookup_max_tokens(model_name)
+        self.max_context_tokens = self._configured_max_tokens(model_name)
         self.token_threshold = 0.5  # 50% threshold
         self._is_first_turn = True
         self._switch_requested = False
         self._requested_focus: Optional[str] = None
+
+    @classmethod
+    def _configured_max_tokens(cls, model_name: str) -> int:
+        """Resolve the context limit, allowing self-hosted endpoints to state it.
+
+        A llama-server alias is intentionally provider-neutral and therefore is
+        absent from LiteLLM's model map. Without an explicit override the agent
+        could assume 128K while the server was launched with a smaller context.
+        """
+        configured = os.getenv("MODEL_CONTEXT_WINDOW")
+        if configured is not None:
+            try:
+                value = int(configured)
+                if value <= 0:
+                    raise ValueError
+                return value
+            except ValueError:
+                logger.warning(
+                    "Ignoring invalid MODEL_CONTEXT_WINDOW=%r; expected a positive integer.",
+                    configured,
+                )
+        return cls._lookup_max_tokens(model_name)
 
     @classmethod
     def _lookup_max_tokens(cls, model_name: str) -> int:

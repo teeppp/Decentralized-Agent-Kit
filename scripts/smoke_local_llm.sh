@@ -20,7 +20,7 @@ source scripts/smoke_common.sh
 
 MODEL="${LOCAL_OLLAMA_MODEL:-llama3.1:8b}"
 export LOCAL_MODEL_NAME="ollama_chat/${MODEL}"
-COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.local-llm.yml)
+COMPOSE=(docker compose -p "${DAK_SMOKE_COMPOSE_PROJECT:-dak-ollama-smoke}" -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.local-llm.yml)
 KEEP="${1:-}"
 
 echo "==> Checking host Ollama..."
