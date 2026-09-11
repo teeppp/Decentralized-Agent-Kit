@@ -8,7 +8,7 @@
 # docs/guides/local_llm_llamacpp.md for per-machine setups.
 #
 # Usage (layer on top of the normal application stack):
-#   llama-server -hf <model.gguf> --port 18080 --jinja     # or an SSH tunnel to :18080
+#   llama-server -hf <model.gguf> --port 18080 --jinja -c 8192   # or an SSH tunnel to :18080
 #   docker compose -f docker-compose.yml -f docker-compose.llamacpp.yml up -d --build
 # Set LLAMACPP_API_BASE if the endpoint is not exposed on host port 18080.
 #
@@ -23,7 +23,8 @@ services:
       # The OpenAI client validates that a key exists even though llama-server
       # does not authenticate a typical local endpoint.
       OPENAI_API_KEY: ${LLAMACPP_API_KEY:-not-used}
-      # Keep AdaptiveAgent's compaction threshold aligned with llama-server.
+      # The agent's context budgets are derived from this; keep it equal to the
+      # server's -c (llama-server defaults to a smaller context when -c is omitted).
       MODEL_CONTEXT_WINDOW: ${LLAMACPP_CONTEXT_SIZE:-8192}
     extra_hosts:
       - "host.docker.internal:host-gateway"

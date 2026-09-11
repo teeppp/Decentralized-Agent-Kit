@@ -5,6 +5,14 @@ from dak_agent.mode_manager import ModeManager
 
 class TestModeManager(unittest.TestCase):
     def setUp(self):
+        # The context-window branch reads MODEL_CONTEXT_WINDOW, so a value
+        # exported in the developer's shell (direnv) would otherwise decide the
+        # outcome of the default-resolution tests below.
+        env_patch = patch.dict(os.environ, {}, clear=False)
+        env_patch.start()
+        os.environ.pop("MODEL_CONTEXT_WINDOW", None)
+        self.addCleanup(env_patch.stop)
+
         self.mode_manager = ModeManager()
 
         # Create mock tools

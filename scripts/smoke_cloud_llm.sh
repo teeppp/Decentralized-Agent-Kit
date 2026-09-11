@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 source scripts/smoke_common.sh
 
 export CLOUD_MODEL_NAME="${CLOUD_MODEL_NAME:-openai/gpt-5.6-luna}"
-COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.cloud-llm.yml)
+COMPOSE=(docker compose -p "${DAK_SMOKE_COMPOSE_PROJECT:-dak-cloud-smoke}" -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.cloud-llm.yml)
 KEEP="${1:-}"
 
 [ -f .env ] || touch .env

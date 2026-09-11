@@ -52,6 +52,9 @@ llama-server -hf bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M \
 
 - **`--jinja` は必須**: chat template を有効化しないと OpenAI 形式の
   tool calling（structured `tool_calls`）が出ない。
+- **`-c` も明示する**: 省略すると llama-server はビルド既定（近年は 4096）の
+  context で動く一方、DAK 側は `LLAMACPP_CONTEXT_SIZE`（既定 8192）を信じて
+  予算を決めるため、実際より大きい窓を前提にしてしまう。
 - モデルは Ollama スモークで検証済みの llama3.1 8B 系を既定にする
   （tool-calling の信頼性が確認済み。詳細は README のモデル比較表）。
   Q4_K_M で ~4.9GB。
@@ -68,7 +71,7 @@ uv tool install git+https://github.com/googlecolab/google-colab-cli.git
 colab new -s local-llm --gpu G4      # コンピューティングユニットを消費する点に注意
 colab ssh -s local-llm               # ~/.ssh/config に Host エントリを書く
 # VM 側: モデル取得と llama-server 起動（VM のシェルで）
-#   llama-server -hf <model.gguf> --port 18080 -ngl 99 --jinja
+#   llama-server -hf <model.gguf> --port 18080 -ngl 99 --jinja -c 8192
 # ローカル側: フォワードを維持
 ssh -N colab-llm                     # LocalForward 18080 が開く
 curl http://127.0.0.1:18080/health   # 確認
@@ -77,7 +80,7 @@ curl http://127.0.0.1:18080/health   # 確認
 
 ### C. Ubuntu GPU サーバ（LAN / SSH トンネル）
 
-サーバ側で llama-server（CUDA ビルド, `-ngl 99 --jinja`）を 8080 などで起動し、
+サーバ側で llama-server（CUDA ビルド, `-ngl 99 --jinja -c 8192`）を 8080 などで起動し、
 ローカルへトンネルする:
 
 ```bash
@@ -94,6 +97,20 @@ llama-server も既定はループバックバインド）。ホストの `curl 
 `--host 0.0.0.0` で起動）にする。macOS / Docker Desktop では不要。
 同じ失敗クラスの前例: `docker-compose.local-llm.yml` のコメントと
 `nightly-eval.yml` の `OLLAMA_HOST=0.0.0.0`。
+
+## スモーク実行時の注意
+
+`./scripts/smoke_llamacpp.sh` は専用の Compose プロジェクト
+（`dak-llamacpp-smoke`）でスタックを立てる。実行後に `down -v` するため、
+既定プロジェクトのままだとアプリの Postgres ボリュームを消してしまうからである
+（`smoke_local_llm.sh` / `smoke_cloud_llm.sh` も同様に分離している）。
+
+- プロジェクトを分けてもホストポートは分かれない。通常スタックを起動したままだと
+  ポート衝突で失敗するので、先に `docker compose down` で止める（スクリプトが
+  検知して案内する）。
+- `--keep` で残したスタックは既定プロジェクトには属さないため、素の
+  `docker compose down -v` では止まらない。終了時に表示される
+  `docker compose -p dak-llamacpp-smoke -f ... down -v` を使う。
 
 ## モデル選択の指針
 
