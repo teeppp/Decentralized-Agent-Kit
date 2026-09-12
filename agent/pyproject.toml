@@ -25,7 +25,10 @@ dependencies = [
     # Solana + AP2/x402 support
     "solana>=0.40.0",
     "solders>=0.21.0",
-    "a2a-sdk>=0.2.0",
+    # a2a-sdk 1.x は型定義が pydantic から protobuf 生成型へ全面移行し、google-adk 2.8.0 の
+    # A2A 実装（RemoteA2aAgent / A2aAgentExecutor）が追随していない。1.x を入れると
+    # エージェントカードの wire format が変わり A2A が成立しなくなる（PR #76 参照）。
+    "a2a-sdk>=0.2.0,<1",
 ]
 
 [build-system]
