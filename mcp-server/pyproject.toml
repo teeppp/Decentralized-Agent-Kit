@@ -6,7 +6,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.28.1",
-    "mcp>=1.22.0",
+    # mcp 2.x は FastMCP が MCPServer に改名され main.py の移行が必要（PR #73 参照）。
+    "mcp>=1.22.0,<2",
     "uvicorn>=0.52.4",
     "starlette>=1.6.0"
 ]
