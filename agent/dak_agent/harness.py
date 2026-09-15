@@ -9,6 +9,11 @@ Three layers, cheapest first:
 2. ADK token-threshold compaction (``EventsCompactionConfig``): before each
    model call ADK summarizes older session events once the last observed prompt
    crossed ``token_threshold`` - this works *within* a single long invocation.
+   The summary is produced by ``BudgetedEventSummarizer``, which sizes its own
+   request to the window (ADK's summarizer renders every thought verbatim, so
+   with a reasoning model its prompt can be 2-3x the prompt it is compacting)
+   and never raises: a failed compaction is skipped or replaced by an excerpt,
+   so it can no longer wedge a session.
 3. Request guard (``ContextHarnessPlugin.before_model_callback``): keeps a
    user turn in the request after compaction (chat templates require one) and,
    as a last resort, elides the oldest tool payloads when the assembled request
@@ -27,6 +32,9 @@ from typing import Any, Optional
 
 from google.adk.apps.app import EventsCompactionConfig
 from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
+from google.adk.events.event import Event
+from google.adk.events.event_actions import EventActions, EventCompaction
+from google.adk.models.llm_request import LlmRequest
 from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools import FunctionTool
 from google.genai import types
@@ -60,10 +68,22 @@ COMPACTION_PROMPT_TEMPLATE = (
     "numbers and identifiers).\n"
     "3. Decisions: choices made and why.\n"
     "4. Remaining work: open questions and the next concrete steps.\n"
-    "Be concise; drop raw tool output once its findings are captured. Output "
-    "only the summary itself, with no preamble.\n\n"
+    "Be concise; drop raw tool output once its findings are captured. Keep the "
+    "whole summary to a few hundred words. Output only the summary itself, with "
+    "no preamble.\n\n"
     "{conversation_history}"
 )
+
+# One rendered history entry (a thought, a tool call or a tool response) in the
+# compaction prompt. Dense entries (user turns, model answers, the previous
+# summary) get several times this.
+_ENTRY_WINDOW_FRACTION = 0.05
+_MIN_ENTRY_CHARS = 400
+_MAX_ENTRY_CHARS = 2_000
+_SHRUNK_ENTRY_CHARS = 200
+_DENSE_ENTRY_MULTIPLIER = 4
+_COMPACTION_ATTEMPTS = 3
+_DENSE_KINDS = frozenset({"user", "text"})
 
 
 def estimate_tokens(text: str) -> int:
@@ -117,6 +137,7 @@ class HarnessSettings:
     compaction_interval: int = 20
     request_budget_ratio: float = 0.85
     tool_output_max_chars: Optional[int] = None
+    compaction_input_ratio: float = 0.5
 
     @classmethod
     def from_env(cls, model_name: str) -> "HarnessSettings":
@@ -127,11 +148,23 @@ class HarnessSettings:
             compaction_interval=_env_int("DAK_COMPACTION_INTERVAL", 20, 1),
             request_budget_ratio=_env_float("DAK_REQUEST_BUDGET_RATIO", 0.85, 0.0, 1.0),
             tool_output_max_chars=_env_int("DAK_TOOL_OUTPUT_MAX_CHARS", 0, 0) or None,
+            compaction_input_ratio=_env_float("DAK_COMPACTION_INPUT_RATIO", 0.5, 0.0, 1.0),
         )
 
     @property
     def compaction_token_threshold(self) -> int:
         return max(1, int(self.context_window * self.compaction_threshold_ratio))
+
+    @property
+    def compaction_input_tokens(self) -> int:
+        """Budget for the history rendered into one compaction request; the rest
+        of the window is left for the summary itself."""
+        return max(256, int(self.context_window * self.compaction_input_ratio))
+
+    @property
+    def compaction_entry_chars(self) -> int:
+        budget = int(self.context_window * _ENTRY_WINDOW_FRACTION)
+        return max(_MIN_ENTRY_CHARS, min(_MAX_ENTRY_CHARS, budget))
 
     @property
     def request_token_budget(self) -> int:
@@ -151,15 +184,231 @@ def harness_enabled() -> bool:
     return os.getenv("DAK_CONTEXT_HARNESS", "true").lower() != "false"
 
 
+def is_context_overflow_error(exc: BaseException) -> bool:
+    """True if a model error means "the request does not fit the window"."""
+    if "ContextWindowExceeded" in type(exc).__name__:
+        return True
+    message = str(exc).lower()
+    return any(
+        marker in message
+        for marker in (
+            "exceeds the available context size",  # llama.cpp
+            "context_length_exceeded",  # OpenAI
+            "maximum context length",
+            "context window exceeded",
+            "prompt is too long",  # Anthropic
+            "input token count exceeds",  # Gemini
+        )
+    )
+
+
+@dataclass
+class _HistoryEntry:
+    kind: str  # user | text | thought | call | response
+    text: str
+    event_index: int = 0
+
+
+def _cap(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}... [truncated {len(text) - limit} chars]"
+
+
+class BudgetedEventSummarizer(LlmEventSummarizer):
+    """``LlmEventSummarizer`` that fits its own request to the window and never raises.
+
+    Why this exists: ADK's summarizer renders every thought of every event
+    verbatim and calls the model outside the agent's callback chain, so the
+    request guard never sees it. With a reasoning model (Qwen3 thinking) the
+    compaction prompt grew to 50K tokens on a 32K window while the prompt it was
+    meant to shrink was 20K. The resulting ``ContextWindowExceededError`` was
+    re-raised on every following turn (the trigger condition never changes),
+    which wedged the session permanently.
+
+    Behaviour:
+
+    * Each history entry is capped; bulky kinds (thoughts, tool calls, tool
+      responses) get ``compaction_entry_chars``, dense kinds (user turns, model
+      answers, the previous rolling summary) several times that.
+    * The rendered history is fitted to ``compaction_input_tokens`` by shrinking
+      bulky entries first, then dense ones, then dropping the oldest bulky
+      entries, then the oldest dense ones. The first dense entry (original
+      request or rolling summary) is never dropped.
+    * If the model still rejects the request for size, the budget is halved and
+      retried; after ``_COMPACTION_ATTEMPTS`` the fitted excerpt itself becomes
+      the summary so the session keeps moving.
+    * Any other model failure is logged and compaction is skipped for this call
+      (returns ``None``): the request guard keeps the next model call inside the
+      window, and the failure surfaces there if it is persistent.
+    """
+
+    def __init__(self, llm: Any, settings: HarnessSettings, prompt_template: Optional[str] = None):
+        super().__init__(llm=llm, prompt_template=prompt_template or COMPACTION_PROMPT_TEMPLATE)
+        self.settings = settings
+
+    # -- rendering -----------------------------------------------------------
+
+    def _history_entries(self, events: list[Event]) -> list[_HistoryEntry]:
+        entries: list[_HistoryEntry] = []
+        for index, event in enumerate(events):
+            if not (event.content and event.content.parts):
+                continue
+            is_compaction = bool(event.actions and event.actions.compaction)
+            for part in event.content.parts:
+                if part.thought and part.text:
+                    if not is_compaction:
+                        self._append_text(entries, index, "thought", f"{event.author} (thought): ", part.text)
+                elif part.text:
+                    kind = "user" if event.author == "user" else "text"
+                    self._append_text(entries, index, kind, f"{event.author}: ", part.text)
+                if part.function_call:
+                    call = part.function_call
+                    entries.append(_HistoryEntry(
+                        "call", f"{event.author} called tool: {call.name}({call.args})", index))
+                if part.function_response:
+                    response = part.function_response
+                    entries.append(_HistoryEntry(
+                        "response", f"Tool response from {response.name}: {response.response}", index))
+        return entries
+
+    @staticmethod
+    def _append_text(entries: list[_HistoryEntry], index: int, kind: str, prefix: str, text: str) -> None:
+        """Add a text part, merging it into the previous entry when that came from
+        the same event and kind. Streaming stores a model's reasoning as hundreds
+        of tiny thought parts per event; rendering each on its own prefixed line
+        (as ADK does) turned 23K chars of thought into 176K chars of prompt in
+        the wedged session. Separate events stay separate entries.
+        """
+        last = entries[-1] if entries else None
+        if last is not None and last.event_index == index and last.kind == kind:
+            last.text += text
+        else:
+            entries.append(_HistoryEntry(kind, prefix + text, index))
+
+    def _fit_history(self, entries: list[_HistoryEntry], budget_tokens: int) -> list[str]:
+        """Render `entries` under `budget_tokens` (estimated), losing bulk before facts."""
+        entry_cap = self.settings.compaction_entry_chars
+        dense_cap = entry_cap * _DENSE_ENTRY_MULTIPLIER
+        kept = list(entries)
+
+        def render() -> list[str]:
+            return [_cap(e.text, dense_cap if e.kind in _DENSE_KINDS else entry_cap) for e in kept]
+
+        def size(rendered: list[str]) -> int:
+            return sum(estimate_tokens(r) + 1 for r in rendered)
+
+        rendered = render()
+        while size(rendered) > budget_tokens:
+            if entry_cap > _SHRUNK_ENTRY_CHARS:
+                entry_cap = max(_SHRUNK_ENTRY_CHARS, entry_cap // 2)
+            elif dense_cap > entry_cap:
+                dense_cap = max(entry_cap, dense_cap // 2)
+            else:
+                # Drop the oldest bulky entry; if none is left, the oldest dense
+                # entry after the first one (the request / rolling summary).
+                bulky = [i for i, e in enumerate(kept) if e.kind not in _DENSE_KINDS]
+                if bulky and len(kept) > 1:
+                    del kept[bulky[0]]
+                elif len(kept) > 2:
+                    del kept[1]
+                else:
+                    break  # a single entry, or the first dense entry + the newest one
+            rendered = render()
+        dropped = len(entries) - len(kept)
+        if dropped:
+            logger.warning(
+                "Context harness: compaction dropped %d oldest history entries to fit %d tokens", dropped, budget_tokens)
+        return rendered
+
+    # -- model call ----------------------------------------------------------
+
+    async def _summarize(self, history: str):
+        prompt = self._prompt_template.format(conversation_history=history)
+        llm_request = LlmRequest(
+            model=self._llm.model,
+            contents=[types.Content(role="user", parts=[types.Part(text=prompt)])],
+        )
+        async for llm_response in self._llm.generate_content_async(llm_request, stream=False):
+            if llm_response.content:
+                return llm_response.content, llm_response.usage_metadata
+        return None, None
+
+    @staticmethod
+    def _compaction_event(events: list[Event], content: types.Content, usage_metadata: Any) -> Event:
+        # Keep only the summary text: a reasoning model also returns its thoughts,
+        # and ADK seeds the next compaction with this content as a plain model
+        # event, so stored thoughts would leak into every later summary.
+        content = types.Content(role="model", parts=[p for p in content.parts or [] if not p.thought])
+        return Event(
+            author="user",
+            actions=EventActions(compaction=EventCompaction(
+                start_timestamp=events[0].timestamp,
+                end_timestamp=events[-1].timestamp,
+                compacted_content=content,
+            )),
+            invocation_id=Event.new_id(),
+            usage_metadata=usage_metadata,
+        )
+
+    async def maybe_summarize_events(self, *, events: list[Event]) -> Optional[Event]:
+        if not events:
+            return None
+        entries = self._history_entries(events)
+        if not entries:
+            return None
+
+        budget = self.settings.compaction_input_tokens - estimate_tokens(self._prompt_template)
+        rendered: list[str] = []
+        previous: Optional[list[str]] = None
+        for attempt in range(1, _COMPACTION_ATTEMPTS + 1):
+            rendered = self._fit_history(entries, max(64, budget))
+            if rendered == previous:
+                break  # nothing left to shrink; re-sending the same request would fail the same way
+            previous = rendered
+            try:
+                content, usage = await self._summarize("\n".join(rendered))
+            except Exception as e:
+                if not is_context_overflow_error(e):
+                    logger.warning(
+                        "Context harness: compaction skipped, summarizer failed (%s: %s)", type(e).__name__, e)
+                    return None
+                logger.warning(
+                    "Context harness: compaction request rejected for size (attempt %d/%d, budget %d tokens): %s",
+                    attempt, _COMPACTION_ATTEMPTS, budget, e)
+                budget //= 2
+                continue
+            if content is None:
+                return None
+            if not any(p.text and not p.thought for p in content.parts or []):
+                # A reasoning model that ran out of output tokens while thinking
+                # returns thoughts only; storing that would hide the whole range
+                # behind an empty summary.
+                logger.warning("Context harness: summarizer returned no summary text (thoughts only)")
+                break
+            logger.info("Context harness: compacted %d events (%d history entries)", len(events), len(rendered))
+            return self._compaction_event(events, content, usage)
+
+        # The model could not produce a summary: keep the task alive with the
+        # excerpt itself rather than failing every turn from here on.
+        logger.error(
+            "Context harness: summarizer failed after %d attempt(s); compacting %d events into a verbatim excerpt",
+            attempt, len(events))
+        excerpt = (
+            "[Automatic excerpt: the summarizer could not process the earlier history, "
+            "so these are its capped raw entries. Continue the task from them.]\n" + "\n".join(rendered)
+        )
+        return self._compaction_event(
+            events, types.Content(role="model", parts=[types.Part(text=excerpt)]), None)
+
+
 def make_compaction_config(settings: HarnessSettings, llm: Any = None) -> EventsCompactionConfig:
     """ADK events compaction: token-threshold (in-invocation) + sliding window.
 
     ``llm`` is the summarizer model; without it ADK falls back to the root
-    agent's model with its generic prompt.
+    agent's model with its generic (unbudgeted) summarizer.
     """
-    summarizer = (
-        LlmEventSummarizer(llm=llm, prompt_template=COMPACTION_PROMPT_TEMPLATE) if llm is not None else None
-    )
+    summarizer = BudgetedEventSummarizer(llm=llm, settings=settings) if llm is not None else None
     return EventsCompactionConfig(
         summarizer=summarizer,
         token_threshold=settings.compaction_token_threshold,
@@ -281,6 +530,9 @@ def make_read_tool_output_tool(max_chars: int) -> FunctionTool:
 def _part_tokens(part: types.Part) -> int:
     total = 0
     if part.text:
+        # Thoughts count too: LiteLLM sends stored reasoning back as
+        # `reasoning_content` and e.g. the Qwen3 chat template renders it as
+        # <think> blocks for every assistant turn (verified with /apply-template).
         total += estimate_tokens(part.text)
     if part.function_call:
         total += estimate_tokens(json.dumps(part.function_call.args or {}, ensure_ascii=False, default=str))
@@ -315,8 +567,18 @@ def _fixed_request_tokens(llm_request) -> int:
     return total
 
 
+_DROP_PART = types.Part()  # marker: remove the part entirely
+
+
 def _elide_part(part: types.Part, kind: str) -> Optional[types.Part]:
     """Return a slimmed copy of `part` for `kind`, or None if nothing to remove."""
+    if kind == "thought":
+        # Old reasoning is the least useful payload in a request and, without a
+        # signature, no provider needs it back (Anthropic/Gemini signed thoughts
+        # are opaque state and must stay).
+        if part.thought and part.text and not part.thought_signature:
+            return _DROP_PART
+        return None
     if kind == "function_response" and part.function_response:
         response = part.function_response.response or {}
         size = len(json.dumps(response, ensure_ascii=False, default=str))
@@ -349,8 +611,9 @@ def fit_request_to_budget(llm_request, budget_tokens: int, keep_last: int = 2) -
         return 0
 
     elided = 0
-    # Two passes: tool responses first (bulky, re-fetchable), then long texts.
-    for kind in ("function_response", "text"):
+    # Three passes: old thoughts (worthless to the model), then tool responses
+    # (bulky, re-fetchable), then long texts.
+    for kind in ("thought", "function_response", "text"):
         for index in range(max(0, len(contents) - keep_last)):
             if total <= budget_tokens:
                 break
@@ -363,13 +626,16 @@ def fit_request_to_budget(llm_request, budget_tokens: int, keep_last: int = 2) -
             changed = False
             for part in content.parts or []:
                 slim = _elide_part(part, kind)
-                if slim is not None:
-                    total -= _part_tokens(part) - _part_tokens(slim)
-                    new_parts.append(slim)
-                    changed = True
-                    elided += 1
-                else:
+                if slim is None:
                     new_parts.append(part)
+                    continue
+                total -= _part_tokens(part) - _part_tokens(slim)
+                changed = True
+                elided += 1
+                if slim is not _DROP_PART:
+                    new_parts.append(slim)
+            if changed and not new_parts:
+                new_parts = [types.Part(text="[thoughts elided]")]  # never leave an empty turn
             if changed:
                 contents[index] = types.Content(role=content.role, parts=new_parts)
 

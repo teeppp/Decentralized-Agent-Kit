@@ -63,6 +63,8 @@ request (41039 tokens) exceeds the available context size (32768 tokens)
      置き換える。直近 4 イベントはそのまま残し、関数呼び出しと応答のペアは ADK が壊さない。
    - 要約プロンプトは「元の依頼の原文、調べ済みのファイルと事実、決定事項、残作業」を
      残すよう DAK 用に調整した。
+   - 要約は ADK 標準の `LlmEventSummarizer` ではなく、DAK の `BudgetedEventSummarizer`
+     が作る。要約リクエスト自身を窓に収め（§5）、失敗しても例外を投げない。
 3. **リクエストガード**（`ContextHarnessPlugin.before_model_callback`）
    - ADK は圧縮した要約を **model ロール**のメッセージとして差し込む。そのため元の依頼まで
      圧縮されると、リクエストにユーザーの発話が 1 つも残らない。llama.cpp の Qwen テンプレート
@@ -94,6 +96,7 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
 | `DAK_COMPACTION_THRESHOLD_RATIO` | `0.6` | 圧縮を始める窓占有率 |
 | `DAK_COMPACTION_RETAIN_EVENTS` | `4` | 圧縮せずに残す直近イベント数 |
 | `DAK_COMPACTION_INTERVAL` | `20` | sliding-window 圧縮の間隔（ユーザーターン数） |
+| `DAK_COMPACTION_INPUT_RATIO` | `0.5` | 1 回の要約リクエストに入れる履歴の上限（窓占有率）。残りは要約の出力枠 |
 | `DAK_REQUEST_BUDGET_RATIO` | `0.85` | 最終ガードの上限 |
 | `DAK_TOOL_OUTPUT_MAX_CHARS` | 窓の 15%（2K〜40K 文字） | 1 回のツール結果の上限 |
 
@@ -125,7 +128,7 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
 | P1 | **調査用サブエージェント（`AgentTool`）** | 「リポジトリを読んで要約」を子エージェントに任せ、親のコンテキストには結論だけを残す（Deep Agents の `task`、Claude Code の Explore 相当）。長い調査タスクで最も効く | #85 |
 | P1 | **内容検索ツール（grep）と行番号付き読み込み** | 今の `search_files` はファイル名しか検索できず、中身を探すにはファイル全体を読むしかない。`grep(pattern, path, glob)` と `edit_file`（文字列置換）を足すか、ADK `EnvironmentToolset` への移行を検討 | #86, #16, #20 |
 | P1 | **TODO ツール（セッション state に保存）** | `write_todos` 相当。圧縮後も計画が消えないよう state に置き、指示へ注入する。今の `planner` は `require_confirmation=True` のため、「計画を立てる」だけで毎回承認待ちになり、A2A や `/run` 経由の自律実行が止まる（実機で確認。本変更で承認は opt-in 化済み） | #87, #21 |
-| P2 | **コンテキスト超過からの回復** | `on_model_error_callback` で `ContextWindowExceededError` を受けたら、強制圧縮して再試行するか、利用者に分かる形で失敗させる | #88 |
+| P2 | **コンテキスト超過からの回復** | 圧縮側は §5 で対応済み（要約は失敗しても例外を投げず、最悪でも抜粋で圧縮する）。残りはモデル呼び出し側: `on_model_error_callback` で `ContextWindowExceededError` を受けたら、強制圧縮して再試行するか、利用者に分かる形で失敗させる | #88 |
 | P2 | **窓サイズの自動検出** | llama-server の `/props`（`n_ctx`）から窓を取る。compose 既定の 8192 と実サーバーの 32768 のようなずれを防ぐ | #89 |
 | P2 | **`SkillToolset` への移行** | 独自の `SkillRegistry`/`enable_skill` を ADK 標準（Agent Skills 仕様・段階的開示・リソース読み込み）に寄せ、保守コストを下げる | #90, #81 |
 | P2 | **ツール失敗の自己修正** | `ReflectAndRetryToolPlugin` を試す | #91 |
@@ -133,3 +136,73 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
 | P3 | **長時間タスクの評価** | nightly-eval に「リポジトリ調査」系の長いゴールデンシナリオを加え、窓超過率・圧縮回数・トークン数を Langfuse の指標で追う | #93, #5, #71 |
 | P3 | **プロンプトキャッシュ** | `ContextCacheConfig`（Gemini/Anthropic）でコストと遅延を下げる | #94 |
 | P3 | **サンドボックス** | ファイル・コマンド系ツールの分離 | #20, #31, #43, #80 |
+
+## 5. 2 度目の発端: 圧縮の要約リクエスト自身が窓を超えた（2026-09-14）
+
+§3 のハーネスを入れた後、Switchboard から llama.cpp（Qwen3 27B, `n_ctx=32768`）の DAK に
+送ったタスクが次のエラーで止まり、「つづけて」を送っても同じエラーで即死するようになった。
+
+```
+litellm.ContextWindowExceededError: request (50848 tokens) exceeds the available
+context size (32768 tokens)          ← 翌日の再送では 52152 tokens
+```
+
+### 何が起きていたか
+
+agent ログのスタックトレース、ADK セッション DB（Postgres の `events`）、Switchboard の
+`events` を突き合わせた結果:
+
+| # | 事実 | 出典 |
+|---|------|------|
+| 1 | 例外は **モデル呼び出しではなく圧縮の要約呼び出し**（`compaction.py → LlmEventSummarizer.maybe_summarize_events`）から出ている | agent ログ |
+| 2 | 直前のモデル呼び出しのプロンプトは **20,439 トークン**（窓の 62%、ガードの予算内）。それを圧縮するための要約リクエストが **50,848 トークン** | セッション DB の `usage_metadata` と llama.cpp の 400 応答 |
+| 3 | 前回の圧縮（14:01）以降の 20 イベント（seed 込み）に含まれる **思考（thought）が約 23,000 文字**。しかもストリーミングで **約 5,600 個の数文字の thought パート**として保存されており、ADK の summarizer はその 1 つ 1 つを `dak_agent (thought): ` 付きの行にするので、要約プロンプトは 176,000 文字になった。ツール応答は ADK が 2,000 文字で切るが、思考と本文は無制限 | セッション DB / 再現スクリプト |
+| 4 | 思考はモデルのプロンプトにも入る（LiteLLM が `reasoning_content` として送り返し、Qwen3 のテンプレートは過去ターンの分も `<think>` として描画する。llama-server の `/apply-template` で確認）。ただしモデル側は思考 1 パート = 1 行ではなく本文として連結されるため、要約側だけが断片ごとのプレフィックスで 2.5 倍に膨れた | `lite_llm.py` / `/apply-template` |
+| 5 | 要約呼び出しは ADK が summarizer の `llm` を直接叩くため、`before_model_callback`（§3 のリクエストガード）を **通らない** | ADK `llm_event_summarizer.py` |
+| 6 | 圧縮のトリガは「最後に観測したプロンプトが閾値以上」で、失敗しても何も変わらないため **次のターンでも同じ圧縮が同じ入力で走り、同じ例外で死ぬ**。セッションが恒久的に詰む | ADK `compaction.py` |
+
+要するに、§3 の 3 層は「モデルへのリクエスト」を守っていたが、「要約のためのリクエスト」は
+誰も守っておらず、推論モデル（思考を大量に出す）でそこが先に溢れた。
+
+### 直したこと（`BudgetedEventSummarizer`）
+
+ADK の `LlmEventSummarizer` を継承し、要約リクエストを自分で予算内に収める。
+
+1. **履歴エントリの結合と上限**: 同じイベント内で連続する思考（本文）パートは 1 エントリに結合する。
+   その上で、思考・ツール呼び出し・ツール応答は `compaction_entry_chars`
+   （窓の 5%、400〜2,000 文字）、ユーザー発話・モデルの本文・前回の要約（seed）はその 4 倍まで。
+2. **予算への当てはめ**: 描画した履歴が `DAK_COMPACTION_INPUT_RATIO`（既定 0.5）× 窓を
+   超えるなら、嵩張るエントリの上限を半分ずつ縮め（下限 200 文字）、次に密なエントリを縮め、
+   それでも超えるなら **古い嵩張るエントリから落とし**、次に古い密なエントリを落とす。先頭の密な
+   エントリ（元の依頼か前回の要約）は落とさない。
+3. **モデルに拒否された場合**: 窓超過のエラーなら予算を半分にして再試行（3 回まで。縮められなく
+   なったら即打ち切り）。それでも拒否されたら、また要約が思考だけで本文が無かったら、当てはめ済みの
+   抜粋そのものを要約として圧縮イベントにする。
+   **圧縮が原因でターンが失敗することはなくなる**。
+4. **それ以外のモデル障害**（接続断など）: ログを出して今回の圧縮を **スキップ**（`None`）。
+   次のモデル呼び出しはリクエストガードが窓内に収め、障害が続くならそこで見える形で失敗する。
+5. 要約プロンプトに「数百語に収める」を追加（6.8 tok/s の環境で 3,500 トークンの要約を
+   9 分かけて書いていた）。
+6. リクエストガードは、予算超過時に **古い model ターンの署名なし思考パートを最初に落とす**
+   （署名付きの思考は Anthropic/Gemini が返却を要求する不透明な状態なので残す）。それまでガードは
+   思考を数えるだけで削れず、推論モデルではツール応答を消しても足りなかった。
+
+### 復旧の仕方
+
+この変更が入った agent では、詰んでいたセッションに次のメッセージを送るだけでよい。
+最初のモデル呼び出しの前に圧縮が走り、要約が窓内に収まってセッションが前に進む
+。実機の詰んだセッション `7bcbddac…` の 81 イベントを ADK の選択ロジックと本 summarizer に通して
+`llama-server /tokenize` で数えたところ、ADK 標準の要約プロンプトは **52,152 トークン**（エラーの数値と一致）、
+本 summarizer では **8,882 トークン**（予算 16K、32K 窓）に収まった。回避策として旧バージョンでは
+`DAK_CONTEXT_HARNESS=false` で圧縮ごと止められるが、その場合リクエストガードも消えるので勧めない。
+
+### 検証
+
+- `agent/tests/test_harness.py`
+  - `test_adk_summarizer_overflows_on_a_reasoning_model`: 台本モデルが毎ステップ約 3.4K 文字の
+    日本語の思考を出す状況で、ADK 標準の summarizer だと **モデルのリクエストは窓内なのに
+    要約リクエストが窓を超えて run が死ぬ**ことを再現する（本件の縮小版）。
+  - `test_budgeted_summarizer_keeps_compaction_inside_the_window`: 同じ状況で
+    `BudgetedEventSummarizer` なら要約・モデルのリクエストとも窓内で完走する。
+  - `TestBudgetedEventSummarizer`: 予算への当てはめ（嵩張るものから落とし、seed は残す）、
+    窓超過エラーでの再試行と抜粋へのフォールバック、その他エラーでのスキップ。
