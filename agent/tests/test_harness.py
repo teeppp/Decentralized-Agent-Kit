@@ -147,6 +147,7 @@ class TestContextOverflowClassification:
     def test_other_errors(self):
         assert not is_context_overflow_error(ConnectionError("connection refused"))
         assert not is_context_overflow_error(ValueError("No user query found in messages"))
+        assert not is_context_overflow_error(ValueError("Model does not support context window caching"))
 
 
 class TestBudgetedEventSummarizer:
@@ -192,6 +193,48 @@ class TestBudgetedEventSummarizer:
 
         assert [e.kind for e in entries] == ["thought", "call"]
         assert entries[0].text.startswith("dak_agent (thought): 断片0断片1")
+
+    def test_separate_events_are_not_merged(self):
+        summarizer = BudgetedEventSummarizer(_summarizer_llm([]), self.settings)
+        entries = summarizer._history_entries([
+            _event("dak_agent", text="First answer.", ts=1.0), _event("dak_agent", text="Second answer.", ts=2.0)])
+        assert [e.text for e in entries] == ["dak_agent: First answer.", "dak_agent: Second answer."]
+
+    def test_fit_never_drops_the_last_entry(self):
+        summarizer = BudgetedEventSummarizer(_summarizer_llm([]), self.settings)
+        entries = summarizer._history_entries(
+            [_event("user", response=("planner", {"result": "x" * 3000}), ts=float(i)) for i in range(5)])
+        rendered = summarizer._fit_history(entries, budget_tokens=5)
+        assert len(rendered) == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_stops_early_when_nothing_is_left_to_shrink(self):
+        llm = _summarizer_llm([_context_error()] * 3)
+        summarizer = BudgetedEventSummarizer(llm, HarnessSettings(context_window=512))  # budget already tiny
+
+        event = await summarizer.maybe_summarize_events(events=self._events(n=1))
+
+        assert len(llm.prompts) < 3  # identical prompts are not re-sent
+        assert event.actions.compaction.compacted_content.parts[0].text.startswith("[Automatic excerpt")
+
+    @pytest.mark.asyncio
+    async def test_thought_only_summary_falls_back_to_the_excerpt(self):
+        """A reasoning model that ran out of output tokens returns thoughts only."""
+        from google.adk.models.llm_response import LlmResponse
+
+        llm = _summarizer_llm([])
+
+        async def thoughts_only(llm_request, stream=False):
+            yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text="hmm", thought=True)]))
+
+        llm.generate_content_async = thoughts_only
+        summarizer = BudgetedEventSummarizer(llm, self.settings)
+
+        event = await summarizer.maybe_summarize_events(events=self._events())
+
+        parts = event.actions.compaction.compacted_content.parts
+        assert len(parts) == 1 and not parts[0].thought
+        assert parts[0].text.startswith("[Automatic excerpt")
 
     def test_fit_loses_bulk_before_facts(self):
         summarizer = BudgetedEventSummarizer(_summarizer_llm([]), self.settings)
@@ -337,11 +380,34 @@ def _fr(name, size):
 
 
 class TestRequestBudgetGuard:
-    def test_unsigned_thoughts_do_not_count(self):
-        # LiteLLM drops reasoning parts for non-Anthropic routes (llama.cpp, OpenAI, Gemini).
-        assert harness._part_tokens(types.Part(text="a" * 400, thought=True)) == 0
-        assert harness._part_tokens(types.Part(text="a" * 400, thought=True, thought_signature=b"sig")) == 100
-        assert harness._part_tokens(types.Part(text="a" * 400)) == 100
+    def test_thoughts_count_and_old_unsigned_ones_are_dropped_first(self):
+        # LiteLLM sends stored reasoning back (`reasoning_content`) and the Qwen3
+        # template renders it, so thoughts must be budgeted and are the first to go.
+        assert harness._part_tokens(types.Part(text="a" * 400, thought=True)) == 100
+        request = LlmRequest(contents=[
+            types.Content(role="user", parts=[types.Part(text="q")]),
+            types.Content(role="model", parts=[
+                types.Part(text="x" * 4000, thought=True),
+                types.Part(text="y" * 4000, thought=True, thought_signature=b"sig"),
+                types.Part(function_call=types.FunctionCall(id="1", name="t", args={}))]),
+            types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
+                id="1", name="t", response={"result": "z" * 2000}))]),
+            types.Content(role="user", parts=[types.Part(text="next")]),
+        ])
+        elided = fit_request_to_budget(request, budget_tokens=2000, keep_last=1)
+        parts = request.contents[1].parts
+        assert elided == 1
+        assert [bool(p.thought_signature) for p in parts if p.thought] == [True]  # unsigned gone, signed kept
+        assert parts[-1].function_call is not None
+        assert request.contents[2].parts[0].function_response.response == {"result": "z" * 2000}  # untouched
+
+    def test_thought_only_turn_is_not_left_empty(self):
+        request = LlmRequest(contents=[
+            types.Content(role="model", parts=[types.Part(text="x" * 4000, thought=True)]),
+            types.Content(role="user", parts=[types.Part(text="next")]),
+        ])
+        fit_request_to_budget(request, budget_tokens=100, keep_last=1)
+        assert request.contents[0].parts == [types.Part(text="[thoughts elided]")]
 
     def test_under_budget_is_noop(self):
         request = LlmRequest(contents=[types.Content(role="user", parts=[types.Part(text="hi")])])
@@ -407,7 +473,10 @@ def _request_tokens(llm_request) -> int:
         harness._content_tokens(c) for c in llm_request.contents or [])
 
 
-THOUGHT = "ログを読んで次に何をするか考える。" * 200  # ~3.4K CJK chars of reasoning per step
+# ~3.4K CJK chars of reasoning per step, stored the way streaming stores it:
+# one thought part of a few chars per chunk (the wedged session had ~5,600 of
+# them for 23K chars). ADK's summarizer renders each on its own prefixed line.
+THOUGHT_FRAGMENTS = ["考える。"] * 850
 
 
 def _make_fake_llm(tool_calls: int, thoughts: bool = False):
@@ -445,7 +514,7 @@ def _make_fake_llm(tool_calls: int, thoughts: bool = False):
                     id=f"fc-{self.steps}", name="big_tool", args={}))
             else:
                 part = types.Part(text="done")
-            parts = [types.Part(text=THOUGHT, thought=True), part] if thoughts else [part]
+            parts = [types.Part(text=f, thought=True) for f in THOUGHT_FRAGMENTS] + [part] if thoughts else [part]
             yield LlmResponse(content=types.Content(role="model", parts=parts), usage_metadata=usage)
 
     return ScriptedLlm(model="scripted")

@@ -195,7 +195,7 @@ def is_context_overflow_error(exc: BaseException) -> bool:
             "exceeds the available context size",  # llama.cpp
             "context_length_exceeded",  # OpenAI
             "maximum context length",
-            "context window",
+            "context window exceeded",
             "prompt is too long",  # Anthropic
             "input token count exceeds",  # Gemini
         )
@@ -206,6 +206,7 @@ def is_context_overflow_error(exc: BaseException) -> bool:
 class _HistoryEntry:
     kind: str  # user | text | thought | call | response
     text: str
+    event_index: int = 0
 
 
 def _cap(text: str, limit: int) -> str:
@@ -232,8 +233,8 @@ class BudgetedEventSummarizer(LlmEventSummarizer):
       answers, the previous rolling summary) several times that.
     * The rendered history is fitted to ``compaction_input_tokens`` by shrinking
       bulky entries first, then dense ones, then dropping the oldest bulky
-      entries. The first dense entry (original request or rolling summary) and
-      the newest entries are the last to go.
+      entries, then the oldest dense ones. The first dense entry (original
+      request or rolling summary) is never dropped.
     * If the model still rejects the request for size, the budget is halved and
       retried; after ``_COMPACTION_ATTEMPTS`` the fitted excerpt itself becomes
       the summary so the session keeps moving.
@@ -250,38 +251,40 @@ class BudgetedEventSummarizer(LlmEventSummarizer):
 
     def _history_entries(self, events: list[Event]) -> list[_HistoryEntry]:
         entries: list[_HistoryEntry] = []
-        for event in events:
+        for index, event in enumerate(events):
             if not (event.content and event.content.parts):
                 continue
             is_compaction = bool(event.actions and event.actions.compaction)
             for part in event.content.parts:
                 if part.thought and part.text:
                     if not is_compaction:
-                        self._append_text(entries, "thought", f"{event.author} (thought): ", part.text)
+                        self._append_text(entries, index, "thought", f"{event.author} (thought): ", part.text)
                 elif part.text:
                     kind = "user" if event.author == "user" else "text"
-                    self._append_text(entries, kind, f"{event.author}: ", part.text)
+                    self._append_text(entries, index, kind, f"{event.author}: ", part.text)
                 if part.function_call:
                     call = part.function_call
                     entries.append(_HistoryEntry(
-                        "call", f"{event.author} called tool: {call.name}({call.args})"))
+                        "call", f"{event.author} called tool: {call.name}({call.args})", index))
                 if part.function_response:
                     response = part.function_response
                     entries.append(_HistoryEntry(
-                        "response", f"Tool response from {response.name}: {response.response}"))
+                        "response", f"Tool response from {response.name}: {response.response}", index))
         return entries
 
     @staticmethod
-    def _append_text(entries: list[_HistoryEntry], kind: str, prefix: str, text: str) -> None:
-        """Add a text part, merging it into the previous entry when both are the
-        same kind. Streaming stores a model's reasoning as hundreds of tiny thought
-        parts per event; rendering each on its own prefixed line (as ADK does)
-        turned 23K chars of thought into 176K chars of prompt in the wedged session.
+    def _append_text(entries: list[_HistoryEntry], index: int, kind: str, prefix: str, text: str) -> None:
+        """Add a text part, merging it into the previous entry when that came from
+        the same event and kind. Streaming stores a model's reasoning as hundreds
+        of tiny thought parts per event; rendering each on its own prefixed line
+        (as ADK does) turned 23K chars of thought into 176K chars of prompt in
+        the wedged session. Separate events stay separate entries.
         """
-        if entries and entries[-1].kind == kind and entries[-1].text.startswith(prefix):
-            entries[-1].text += text
+        last = entries[-1] if entries else None
+        if last is not None and last.event_index == index and last.kind == kind:
+            last.text += text
         else:
-            entries.append(_HistoryEntry(kind, prefix + text))
+            entries.append(_HistoryEntry(kind, prefix + text, index))
 
     def _fit_history(self, entries: list[_HistoryEntry], budget_tokens: int) -> list[str]:
         """Render `entries` under `budget_tokens` (estimated), losing bulk before facts."""
@@ -305,12 +308,12 @@ class BudgetedEventSummarizer(LlmEventSummarizer):
                 # Drop the oldest bulky entry; if none is left, the oldest dense
                 # entry after the first one (the request / rolling summary).
                 bulky = [i for i, e in enumerate(kept) if e.kind not in _DENSE_KINDS]
-                if bulky:
+                if bulky and len(kept) > 1:
                     del kept[bulky[0]]
                 elif len(kept) > 2:
                     del kept[1]
                 else:
-                    break
+                    break  # a single entry, or the first dense entry + the newest one
             rendered = render()
         dropped = len(entries) - len(kept)
         if dropped:
@@ -336,8 +339,7 @@ class BudgetedEventSummarizer(LlmEventSummarizer):
         # Keep only the summary text: a reasoning model also returns its thoughts,
         # and ADK seeds the next compaction with this content as a plain model
         # event, so stored thoughts would leak into every later summary.
-        parts = [p for p in content.parts or [] if not p.thought]
-        content = types.Content(role="model", parts=parts or content.parts)
+        content = types.Content(role="model", parts=[p for p in content.parts or [] if not p.thought])
         return Event(
             author="user",
             actions=EventActions(compaction=EventCompaction(
@@ -358,8 +360,12 @@ class BudgetedEventSummarizer(LlmEventSummarizer):
 
         budget = self.settings.compaction_input_tokens - estimate_tokens(self._prompt_template)
         rendered: list[str] = []
+        previous: Optional[list[str]] = None
         for attempt in range(1, _COMPACTION_ATTEMPTS + 1):
             rendered = self._fit_history(entries, max(64, budget))
+            if rendered == previous:
+                break  # nothing left to shrink; re-sending the same request would fail the same way
+            previous = rendered
             try:
                 content, usage = await self._summarize("\n".join(rendered))
             except Exception as e:
@@ -374,14 +380,20 @@ class BudgetedEventSummarizer(LlmEventSummarizer):
                 continue
             if content is None:
                 return None
+            if not any(p.text and not p.thought for p in content.parts or []):
+                # A reasoning model that ran out of output tokens while thinking
+                # returns thoughts only; storing that would hide the whole range
+                # behind an empty summary.
+                logger.warning("Context harness: summarizer returned no summary text (thoughts only)")
+                break
             logger.info("Context harness: compacted %d events (%d history entries)", len(events), len(rendered))
             return self._compaction_event(events, content, usage)
 
-        # The model kept refusing: keep the task alive with the excerpt itself
-        # rather than failing every turn from here on.
+        # The model could not produce a summary: keep the task alive with the
+        # excerpt itself rather than failing every turn from here on.
         logger.error(
-            "Context harness: summarizer rejected %d attempts; compacting %d events into a verbatim excerpt",
-            _COMPACTION_ATTEMPTS, len(events))
+            "Context harness: summarizer failed after %d attempt(s); compacting %d events into a verbatim excerpt",
+            attempt, len(events))
         excerpt = (
             "[Automatic excerpt: the summarizer could not process the earlier history, "
             "so these are its capped raw entries. Continue the task from them.]\n" + "\n".join(rendered)
@@ -517,10 +529,10 @@ def make_read_tool_output_tool(max_chars: int) -> FunctionTool:
 
 def _part_tokens(part: types.Part) -> int:
     total = 0
-    if part.text and (not part.thought or part.thought_signature):
-        # Stored thoughts stay in the session, but LiteLLM only sends them back
-        # to Anthropic-routed models (as signed thinking blocks); every other
-        # provider never sees them, so they must not eat the request budget.
+    if part.text:
+        # Thoughts count too: LiteLLM sends stored reasoning back as
+        # `reasoning_content` and e.g. the Qwen3 chat template renders it as
+        # <think> blocks for every assistant turn (verified with /apply-template).
         total += estimate_tokens(part.text)
     if part.function_call:
         total += estimate_tokens(json.dumps(part.function_call.args or {}, ensure_ascii=False, default=str))
@@ -555,8 +567,18 @@ def _fixed_request_tokens(llm_request) -> int:
     return total
 
 
+_DROP_PART = types.Part()  # marker: remove the part entirely
+
+
 def _elide_part(part: types.Part, kind: str) -> Optional[types.Part]:
     """Return a slimmed copy of `part` for `kind`, or None if nothing to remove."""
+    if kind == "thought":
+        # Old reasoning is the least useful payload in a request and, without a
+        # signature, no provider needs it back (Anthropic/Gemini signed thoughts
+        # are opaque state and must stay).
+        if part.thought and part.text and not part.thought_signature:
+            return _DROP_PART
+        return None
     if kind == "function_response" and part.function_response:
         response = part.function_response.response or {}
         size = len(json.dumps(response, ensure_ascii=False, default=str))
@@ -589,8 +611,9 @@ def fit_request_to_budget(llm_request, budget_tokens: int, keep_last: int = 2) -
         return 0
 
     elided = 0
-    # Two passes: tool responses first (bulky, re-fetchable), then long texts.
-    for kind in ("function_response", "text"):
+    # Three passes: old thoughts (worthless to the model), then tool responses
+    # (bulky, re-fetchable), then long texts.
+    for kind in ("thought", "function_response", "text"):
         for index in range(max(0, len(contents) - keep_last)):
             if total <= budget_tokens:
                 break
@@ -603,13 +626,16 @@ def fit_request_to_budget(llm_request, budget_tokens: int, keep_last: int = 2) -
             changed = False
             for part in content.parts or []:
                 slim = _elide_part(part, kind)
-                if slim is not None:
-                    total -= _part_tokens(part) - _part_tokens(slim)
-                    new_parts.append(slim)
-                    changed = True
-                    elided += 1
-                else:
+                if slim is None:
                     new_parts.append(part)
+                    continue
+                total -= _part_tokens(part) - _part_tokens(slim)
+                changed = True
+                elided += 1
+                if slim is not _DROP_PART:
+                    new_parts.append(slim)
+            if changed and not new_parts:
+                new_parts = [types.Part(text="[thoughts elided]")]  # never leave an empty turn
             if changed:
                 contents[index] = types.Content(role=content.role, parts=new_parts)
 
