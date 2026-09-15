@@ -116,6 +116,10 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
 
 各項目は GitHub Issue 化して Project (DAK Sustainability) で管理している。
 
+> 2026-09 追記: Codex CLI / OpenCode / Gemini CLI / Goose / Claude Code ほかの OSS ハーネスを実装レベルで
+> 調査し、追加のバックログ（#99〜#118、Epic #119）を起票した。調査本文と横断比較は
+> `docs/comparison/harness-survey-2026-09/README.md`。下表の #85〜#94 にも設計参照をコメントで追記済み。
+
 | 優先 | 項目 | 狙い | 関連 |
 |---|---|---|---|
 | P1 | **調査用サブエージェント（`AgentTool`）** | 「リポジトリを読んで要約」を子エージェントに任せ、親のコンテキストには結論だけを残す（Deep Agents の `task`、Claude Code の Explore 相当）。長い調査タスクで最も効く | #85 |
