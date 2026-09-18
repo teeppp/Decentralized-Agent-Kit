@@ -39,13 +39,13 @@ The DAK Agent is a FastAPI-based service that provides an intelligent agent powe
 
 Supports multiple LLM providers with automatic tool calling:
 
-- **Gemini**: Google's Gemini models (default: `gemini-3-pro-preview`)
-- **OpenAI**: GPT-4, GPT-3.5, etc.
-- **Anthropic**: Claude models
+- **Gemini**: Google's Gemini models (default: `gemini-3.8-flash`, runs on the AI Studio free tier)
+- **OpenAI**: `openai/<model>`
+- **Anthropic**: `anthropic/<model>`
 
-Configure via environment variables:
+The provider is selected by the LiteLLM-format `MODEL_NAME`; configure via environment variables:
 ```bash
-LLM_PROVIDER=gemini  # or 'openai', 'anthropic'
+MODEL_NAME=gemini-3.8-flash  # or 'openai/...', 'anthropic/...', 'bedrock/...', 'ollama_chat/...'
 GOOGLE_API_KEY=your_key
 OPENAI_API_KEY=your_key  # if using OpenAI
 ANTHROPIC_API_KEY=your_key  # if using Anthropic
@@ -136,9 +136,8 @@ Get agent capabilities.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `LLM_PROVIDER` | No | `gemini` | LLM provider to use |
+| `MODEL_NAME` | No | `gemini-3.8-flash` | LiteLLM model name; its prefix selects the provider |
 | `GOOGLE_API_KEY` | Yes* | - | Google Gemini API key |
-| `GEMINI_MODEL` | No | `gemini-3-pro-preview` | Gemini model name |
 | `OPENAI_API_KEY` | Yes* | - | OpenAI API key |
 | `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key |
 | `SESSION_SERVICE_URI` | No | `postgresql://...` | PostgreSQL connection string |
