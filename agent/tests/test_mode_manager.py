@@ -101,11 +101,10 @@ class TestModeManager(unittest.TestCase):
         self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
 
     def test_default_model_resolves_full_context_window(self):
-        """The default model (newer than litellm's map) resolves via the override table."""
+        """The default model (gemini-3.8-flash) resolves its 1M window via litellm's map."""
         manager = ModeManager()
-        self.assertEqual(
-            manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["gemini-3.7-flash"]
-        )
+        self.assertEqual(manager.model_name, "gemini-3.8-flash")
+        self.assertGreaterEqual(manager.max_context_tokens, 1_000_000)
         self.assertNotEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
 
     def test_gemini_3x_resolves_context_window_via_litellm(self):

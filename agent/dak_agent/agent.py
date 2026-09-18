@@ -69,7 +69,7 @@ else:
     after_model_callback = None
 
 # --- Model ---
-model_name = os.getenv("MODEL_NAME", os.getenv("GEMINI_MODEL_NAME", "gemini-3.7-flash"))
+model_name = os.getenv("MODEL_NAME", os.getenv("GEMINI_MODEL_NAME", "gemini-3.8-flash"))
 formatted_model_name = get_litellm_model_name(model_name)
 model = LiteLlm(model=formatted_model_name)
 
