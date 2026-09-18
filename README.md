@@ -242,7 +242,8 @@ OPENAI_API_KEY=your_openai_key        # optional
 ANTHROPIC_API_KEY=your_anthropic_key  # optional
 
 # LLM Configuration
-MODEL_NAME=gemini-3.7-flash  # or 'openai/gpt-5.6-luna', 'anthropic/claude-...',
+MODEL_NAME=gemini-3.8-flash  # default; AI Studio free tier (small daily quota),
+                             # or 'openai/gpt-5.6-luna', 'anthropic/claude-...',
                              # 'bedrock/...' (model IDs & auth:
                              # docs/getting-started/bedrock.md), local model
 

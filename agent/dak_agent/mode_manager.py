@@ -27,12 +27,12 @@ class ModeManager:
     # (a too-small value just makes compaction trigger earlier; a too-large
     # one would let the context overflow before it ever fires).
     MODEL_MAX_TOKENS = {
-        # Newer than the pinned litellm's model map; drop once litellm knows it.
-        "gemini-3.7-flash": 1000000,
+        # Overrides for models newer than the pinned litellm's model map go here
+        # (bare name -> context window); drop each once litellm knows it.
         "default": 128000,
     }
 
-    def __init__(self, model_name: str = "gemini-3.7-flash"):
+    def __init__(self, model_name: str = "gemini-3.8-flash"):
         self.model_name = model_name
         self.max_context_tokens = self.resolve_context_window(model_name)
         self._is_first_turn = True
