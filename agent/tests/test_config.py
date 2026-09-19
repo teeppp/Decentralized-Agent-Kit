@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import unittest.mock
 
+from dak_agent import config as config_module
 from dak_agent.config import (
     DEFAULT_MODEL_NAME,
     AgentConfig,
@@ -85,14 +86,20 @@ class TestResolveModelName(unittest.TestCase):
         env = {"MODEL_NAME": "openai/llamacpp", "GEMINI_MODEL_NAME": "gemini-x"}
         self.assertEqual(resolve_model_name(env), "openai/llamacpp")
 
-    def test_legacy_gemini_model_name_is_second(self):
-        self.assertEqual(resolve_model_name({"GEMINI_MODEL_NAME": "gemini-x"}), "gemini-x")
+    def test_legacy_gemini_model_name_is_second_and_logged(self):
+        with self.assertLogs("dak_agent.config", level="WARNING") as logs:
+            self.assertEqual(resolve_model_name({"GEMINI_MODEL_NAME": "gemini-x"}), "gemini-x")
+        self.assertIn("GEMINI_MODEL_NAME", logs.output[0])
+
+    def test_model_name_does_not_log_legacy_warning(self):
+        with self.assertNoLogs("dak_agent.config", level="WARNING"):
+            resolve_model_name({"MODEL_NAME": "openai/llamacpp", "GEMINI_MODEL_NAME": "gemini-x"})
 
     def test_unset_falls_back_to_default(self):
         self.assertEqual(resolve_model_name({}), DEFAULT_MODEL_NAME)
 
     def test_blank_counts_as_unset(self):
-        """docker compose injects "" for a declared-but-unprovided variable."""
+        """`MODEL_NAME=` in .env, or an empty shell export, arrives as ""."""
         self.assertEqual(resolve_model_name({"MODEL_NAME": ""}), DEFAULT_MODEL_NAME)
         self.assertEqual(resolve_model_name({"MODEL_NAME": "  "}), DEFAULT_MODEL_NAME)
         self.assertEqual(
@@ -107,8 +114,9 @@ class TestResolveModelName(unittest.TestCase):
 class TestDefaultModelSingleSource(unittest.TestCase):
     """DEFAULT_MODEL_NAME lives in config.py only; repo-level files must not re-spell it.
 
-    These read files outside agent/, which are absent when the tests run from
-    the agent Docker image, so each check skips when its file is missing.
+    Two checks read repo-root files (docker-compose.yml, .env.example). CI and
+    a normal checkout always have them; they skip only when agent/ is tested
+    on its own (e.g. copied out of the monorepo).
     """
 
     def _read(self, relpath: str) -> str:
@@ -120,7 +128,11 @@ class TestDefaultModelSingleSource(unittest.TestCase):
 
     def test_compose_does_not_repeat_the_default(self):
         compose = self._read("docker-compose.yml")
-        self.assertNotRegex(compose, r"MODEL_NAME\s*[=:]\s*\$\{MODEL_NAME:-")
+        # Positive form: the agent's MODEL_NAME entry must be the bare
+        # pass-through. Any `MODEL_NAME=...` / `MODEL_NAME: ...` spelling
+        # (whatever the default syntax or model) reintroduces a second default.
+        self.assertRegex(compose, r"(?m)^\s*-\s*MODEL_NAME\s*$")
+        self.assertNotRegex(compose, r"(?m)^\s*-?\s*MODEL_NAME\s*[=:]")
         self.assertNotIn(DEFAULT_MODEL_NAME, compose)
 
     def test_env_example_sample_matches_the_default(self):
@@ -130,16 +142,18 @@ class TestDefaultModelSingleSource(unittest.TestCase):
         self.assertEqual(match.group(1), DEFAULT_MODEL_NAME)
 
     def test_no_other_module_spells_the_default(self):
-        pkg = os.path.join(_REPO_ROOT, "agent", "dak_agent")
-        offenders = []
+        pkg = os.path.dirname(os.path.abspath(config_module.__file__))
+        offenders, scanned = [], 0
         for root, _dirs, files in os.walk(pkg):
             for name in files:
                 if not name.endswith(".py") or name == "config.py":
                     continue
+                scanned += 1
                 path = os.path.join(root, name)
                 with open(path, encoding="utf-8") as f:
                     if DEFAULT_MODEL_NAME in f.read():
-                        offenders.append(os.path.relpath(path, _REPO_ROOT))
+                        offenders.append(os.path.relpath(path, pkg))
+        self.assertGreater(scanned, 5, f"expected to scan the dak_agent package, got {pkg}")
         self.assertEqual(offenders, [], "import DEFAULT_MODEL_NAME from dak_agent.config instead")
 
 

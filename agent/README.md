@@ -39,7 +39,7 @@ The DAK Agent is a FastAPI-based service that provides an intelligent agent powe
 
 Supports multiple LLM providers with automatic tool calling:
 
-- **Gemini**: Google's Gemini models (the built-in default is a Gemini Flash model that runs on the AI Studio free tier)
+- **Gemini**: Google's Gemini models (`gemini-...`; the built-in default and its notes are in `.env.example`)
 - **OpenAI**: `openai/<model>`
 - **Anthropic**: `anthropic/<model>`
 
