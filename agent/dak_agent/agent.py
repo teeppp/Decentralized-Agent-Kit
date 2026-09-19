@@ -22,7 +22,7 @@ from pydantic import ConfigDict
 from .a2a_peer_manager import get_a2a_sub_agents
 from .adaptive_agent import AdaptiveAgent
 from .builtin_tools import make_builtin_tools
-from .config import get_litellm_model_name
+from .config import get_litellm_model_name, resolve_model_name
 from .enforcer import ENFORCER_INSTRUCTION, enforcer_validator
 from .harness import (
     ContextHarnessPlugin,
@@ -69,7 +69,7 @@ else:
     after_model_callback = None
 
 # --- Model ---
-model_name = os.getenv("MODEL_NAME", os.getenv("GEMINI_MODEL_NAME", "gemini-3.8-flash"))
+model_name = resolve_model_name()
 formatted_model_name = get_litellm_model_name(model_name)
 model = LiteLlm(model=formatted_model_name)
 

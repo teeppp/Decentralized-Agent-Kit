@@ -1,14 +1,21 @@
-"""Central loading of agent_config.yaml (MCP servers and A2A peers)."""
+"""Central agent configuration: agent_config.yaml (MCP servers, A2A peers) and model selection."""
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 import yaml
 
 logger = logging.getLogger(__name__)
 
 _AGENT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# The ONLY place the fallback model is spelled out. Everything else (compose,
+# docs, other modules) defers to this, so bumping the default is a one-line
+# change here plus the matching sample value in .env.example
+# (tests/test_config.py keeps the two in sync). Choosing a model at runtime
+# never needs a code change: set MODEL_NAME (LiteLLM format).
+DEFAULT_MODEL_NAME = "gemini-3.8-flash"
 
 # Candidate locations, in priority order: Docker image, repo checkout, CWD.
 CONFIG_CANDIDATES = [
@@ -56,6 +63,21 @@ def load_agent_config(path: Optional[str] = None) -> AgentConfig:
         f"{len(mcp_servers)} MCP server(s), {len(a2a_peers)} A2A peer(s)"
     )
     return AgentConfig(mcp_servers=mcp_servers, a2a_peers=a2a_peers)
+
+
+def resolve_model_name(env: Optional[Mapping[str, str]] = None) -> str:
+    """Pick the model: MODEL_NAME, then legacy GEMINI_MODEL_NAME, then DEFAULT_MODEL_NAME.
+
+    Blank values count as unset: docker compose injects an empty string for a
+    variable that is declared but not provided, and an empty model name would
+    otherwise reach LiteLLM and fail at the first request.
+    """
+    env = os.environ if env is None else env
+    for var in ("MODEL_NAME", "GEMINI_MODEL_NAME"):
+        value = (env.get(var) or "").strip()
+        if value:
+            return value
+    return DEFAULT_MODEL_NAME
 
 
 def get_litellm_model_name(model_name: str) -> str:

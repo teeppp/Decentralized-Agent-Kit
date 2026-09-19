@@ -131,7 +131,7 @@ docker compose logs bff -f
 | `GOOGLE_API_KEY` | Yes* | - | Google Gemini API key |
 | `OPENAI_API_KEY` | Yes* | - | OpenAI API key |
 | `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key |
-| `MODEL_NAME` | No | `gemini-3.8-flash` | LiteLLM model name |
+| `MODEL_NAME` | No | built-in (`DEFAULT_MODEL_NAME` in `agent/dak_agent/config.py`; current value shown in `.env.example`) | LiteLLM model name |
 | `DATABASE_URL` | No | Auto-configured | PostgreSQL connection string |
 | `MCP_SERVER_URL` | No | `http://mcp-server:8000/mcp` | Default MCP server URL |
 | `ENABLE_ENFORCER_MODE` | No | `false` | Enable strict ReAct pattern (Ulysses Pact) |

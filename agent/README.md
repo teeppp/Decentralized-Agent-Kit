@@ -39,13 +39,13 @@ The DAK Agent is a FastAPI-based service that provides an intelligent agent powe
 
 Supports multiple LLM providers with automatic tool calling:
 
-- **Gemini**: Google's Gemini models (default: `gemini-3.8-flash`, runs on the AI Studio free tier)
+- **Gemini**: Google's Gemini models (the built-in default is a Gemini Flash model that runs on the AI Studio free tier)
 - **OpenAI**: `openai/<model>`
 - **Anthropic**: `anthropic/<model>`
 
 The provider is selected by the LiteLLM-format `MODEL_NAME`; configure via environment variables:
 ```bash
-MODEL_NAME=gemini-3.8-flash  # or 'openai/...', 'anthropic/...', 'bedrock/...', 'ollama_chat/...'
+MODEL_NAME=<litellm-model>  # optional: 'gemini-...', 'openai/...', 'anthropic/...', 'bedrock/...', 'ollama_chat/...'
 GOOGLE_API_KEY=your_key
 OPENAI_API_KEY=your_key  # if using OpenAI
 ANTHROPIC_API_KEY=your_key  # if using Anthropic
@@ -136,7 +136,7 @@ Get agent capabilities.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MODEL_NAME` | No | `gemini-3.8-flash` | LiteLLM model name; its prefix selects the provider |
+| `MODEL_NAME` | No | `DEFAULT_MODEL_NAME` in `dak_agent/config.py` | LiteLLM model name; its prefix selects the provider. Switching models is an env change, never a code change |
 | `GOOGLE_API_KEY` | Yes* | - | Google Gemini API key |
 | `OPENAI_API_KEY` | Yes* | - | OpenAI API key |
 | `ANTHROPIC_API_KEY` | Yes* | - | Anthropic API key |

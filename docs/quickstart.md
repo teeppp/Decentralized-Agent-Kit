@@ -42,7 +42,7 @@ LOCAL_MODEL_NAME=ollama_chat/llama3.1:8b \
 ### パターン B: API キー
 
 ```bash
-cp .env.example .env   # GOOGLE_API_KEY などを記入、MODEL_NAME=gemini-3.8-flash 等
+cp .env.example .env   # GOOGLE_API_KEY などを記入。MODEL_NAME は任意（未設定なら組み込みの既定モデル）
 docker compose -f docker-compose.yml -f docker-compose.test.yml up -d --build --wait
 ```
 
