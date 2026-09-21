@@ -18,7 +18,7 @@
         <!-- ===== Triggers ===== -->
         <mxCell id="T1" value="Dependabot&#10;(weekly / security)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="40" y="100" width="150" height="50" as="geometry" /></mxCell>
         <mxCell id="T2" value="Schedules (cron)&#10;weekly / biweekly / nightly / quarterly" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="40" y="200" width="150" height="60" as="geometry" /></mxCell>
-        <mxCell id="T3" value="Developer / Claude&#10;.claude/commands, workflow_dispatch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="40" y="320" width="150" height="60" as="geometry" /></mxCell>
+        <mxCell id="T3" value="Developer / Claude&#10;dak-maint, workflow_dispatch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="40" y="320" width="150" height="60" as="geometry" /></mxCell>
 
         <!-- ===== Workflows ===== -->
         <mxCell id="W1" value="ci.yml&#10;unit matrix + fake-LLM integration" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="250" y="100" width="190" height="45" as="geometry" /></mxCell>
