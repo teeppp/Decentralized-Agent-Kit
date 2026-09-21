@@ -182,11 +182,11 @@ class AdaptiveAgent(LlmAgent):
                     return result
 
             # 2. Record any switch_mode tool call
-            self._check_for_switch_request(llm_response)
+            self._check_for_switch_request(llm_response, callback_context)
 
             # 3. Switch modes if the LLM asked for it. Context-window pressure is
             #    handled by the context harness (ADK compaction), not here.
-            if not self._disable_mode_switching and self._mode_manager.should_switch():
+            if not self._disable_mode_switching and self._mode_manager.should_switch(callback_context.state):
                 await self._perform_mode_switch(callback_context)
 
             return None
@@ -194,7 +194,7 @@ class AdaptiveAgent(LlmAgent):
             logger.error(f"CRITICAL ERROR in _wrapped_callback: {e}", exc_info=True)
             return None
 
-    def _check_for_switch_request(self, llm_response: LlmResponse):
+    def _check_for_switch_request(self, llm_response: LlmResponse, callback_context: CallbackContext):
         """Check if the LLM called the switch_mode tool."""
         if llm_response.content and llm_response.content.parts:
             for part in llm_response.content.parts:
@@ -202,6 +202,7 @@ class AdaptiveAgent(LlmAgent):
                     if part.function_call.name == "switch_mode":
                         args = part.function_call.args or {}
                         self._mode_manager.request_switch(
+                            callback_context.state,
                             reason=args.get("reason", ""),
                             new_focus=args.get("new_focus", ""),
                         )
@@ -242,7 +243,7 @@ class AdaptiveAgent(LlmAgent):
             logger.info("Initiating Mode Switch...")
 
             history_summary = self._extract_history_summary(context)
-            requested_focus = self._mode_manager.consume_requested_focus()
+            requested_focus = self._mode_manager.consume_requested_focus(context.state)
 
             # Expand MCP toolsets into individual tools so the Meta-Agent can see them
             expanded_available_tools = []
