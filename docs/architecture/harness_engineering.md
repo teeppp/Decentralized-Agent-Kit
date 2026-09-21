@@ -117,7 +117,7 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
 
 ## 4. 残りのギャップとバックログ（優先度順）
 
-各項目は GitHub Issue 化して Project (DAK Sustainability) で管理している。
+各項目は GitHub Issue 化して [DAK Project #7](https://github.com/users/teeppp/projects/7) で管理している。
 
 > 2026-09 追記: Codex CLI / OpenCode / Gemini CLI / Goose / Claude Code ほかの OSS ハーネスを実装レベルで
 > 調査し、追加のバックログ（#99〜#118、Epic #119）を起票した。調査本文と横断比較は
@@ -139,7 +139,7 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
 
 ## 5. 2 度目の発端: 圧縮の要約リクエスト自身が窓を超えた（2026-09-14）
 
-§3 のハーネスを入れた後、Switchboard から llama.cpp（Qwen3 27B, `n_ctx=32768`）の DAK に
+§3 のハーネスを入れた後、外部のクライアントから llama.cpp（Qwen3 27B, `n_ctx=32768`）の DAK に
 送ったタスクが次のエラーで止まり、「つづけて」を送っても同じエラーで即死するようになった。
 
 ```
@@ -149,8 +149,8 @@ context size (32768 tokens)          ← 翌日の再送では 52152 tokens
 
 ### 何が起きていたか
 
-agent ログのスタックトレース、ADK セッション DB（Postgres の `events`）、Switchboard の
-`events` を突き合わせた結果:
+agent ログのスタックトレース、ADK セッション DB（Postgres の `events`）、クライアント側の
+実行ログを突き合わせた結果:
 
 | # | 事実 | 出典 |
 |---|------|------|
