@@ -129,9 +129,9 @@ async def test_skill_enabled_in_one_turn_is_restored_on_the_next_turn():
     await _run_turn(app, sessions, artifacts, session.id, "u", "enable demo")
     assert "Use the demo skill." in _instructions(requests[-1])
 
-    # Turn 2: a brand-new invocation of the SAME session. The very first
-    # model call of this turn must already carry the skill's instructions,
-    # proving `before_agent_callback` restored it before any model call.
+    # Turn 2: a brand-new invocation of the SAME session; its first model call
+    # must already carry the skill. (On the old code this also passed via the
+    # leaked root; the fresh-instance test below is what isolates the restore.)
     await _run_turn(app, sessions, artifacts, session.id, "u", "continue")
     assert "Use the demo skill." in _instructions(requests[-1])
 
@@ -180,7 +180,7 @@ async def test_switch_mode_in_one_session_does_not_leak_into_another():
     ):
         # "done" first so each session's first turn is spent (switch_mode is
         # never honored on a session's first turn), then "switch".
-        llm, requests = _make_scripted_llm(["done", "done", "switch", "done"])
+        llm, requests = _make_scripted_llm(["done", "done", "switch", "done", "done"])
         agent = _make_agent(llm, with_switch_mode=True)
         app = App(name="dak_agent", root_agent=agent)
         sessions = InMemorySessionService()
@@ -193,6 +193,10 @@ async def test_switch_mode_in_one_session_does_not_leak_into_another():
         await _run_turn(app, sessions, artifacts, session_b.id, "u", "first turn")
         # Session A's second turn triggers the switch.
         await _run_turn(app, sessions, artifacts, session_a.id, "u", "switch please")
+        assert "Mode instruction for debugging." in _instructions(requests[-1])
+        # Session B's next turn must not see session A's mode.
+        await _run_turn(app, sessions, artifacts, session_b.id, "u", "hello again")
+        assert "Mode instruction for debugging." not in _instructions(requests[-1])
 
         state_a = (await sessions.get_session(app_name="dak_agent", user_id="u", session_id=session_a.id)).state
         state_b = (await sessions.get_session(app_name="dak_agent", user_id="u", session_id=session_b.id)).state

@@ -189,3 +189,110 @@ class TestApplySessionConfig(unittest.TestCase):
 
         self.assertIn("Use the demo skill.", new_live.instruction)
         self.assertEqual(new_live.active_skills, ["demo"])
+
+
+class TestResolveSessionTools(unittest.TestCase):
+    """Paths inside `AdaptiveAgent._resolve_session_tools` that rebuild the
+    tool list from session state."""
+
+    def _agent(self, skills):
+        from unittest.mock import MagicMock
+
+        from dak_agent.adaptive_agent import AdaptiveAgent
+        from dak_agent.skill_registry import SkillRegistry
+
+        agent = AdaptiveAgent(model="test-model", name="root", instruction="base", tools=[],
+                              mcp_url="http://default")
+        agent.skill_registry = MagicMock(spec=SkillRegistry)
+        agent.skill_registry.find_skill_dir.side_effect = (
+            lambda name: f"/tmp/nonexistent-{name}" if name in skills else None)
+        agent.skill_registry.get_skill.side_effect = skills.get
+        return agent
+
+    def _toolsets(self, tools):
+        return {(t.url, t.conn_type): t.tool_filter for t in tools if getattr(t, "is_fake_toolset", False)}
+
+    def _fake_make_mcp_toolset(self):
+        from unittest.mock import MagicMock
+
+        def make(url, conn_type="http", tool_filter=None):
+            ts = MagicMock()
+            ts.is_fake_toolset = True
+            ts.url, ts.conn_type, ts.tool_filter = url, conn_type, tool_filter
+            ts.name = None
+            return ts
+        return make
+
+    def test_skill_mcp_server_routes_to_its_own_server(self):
+        agent = self._agent({
+            "extra_skill": {"name": "extra_skill", "tools": ["t1"], "mcp_server": "extra"},
+            "plain": {"name": "plain", "tools": ["t2"]},
+        })
+        agent._mcp_servers = {"extra": {"name": "extra", "url": "http://extra", "type": "sse"}}
+        with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=self._fake_make_mcp_toolset()):
+            tools = agent._resolve_session_tools({"dak_active_skills": ["extra_skill", "plain"]})
+        self.assertEqual(self._toolsets(tools), {
+            ("http://extra", "sse"): ["t1"],
+            ("http://default", "http"): ["t2"],
+        })
+
+    def test_mode_switch_selecting_nothing_falls_back_to_unfiltered_default(self):
+        agent = self._agent({})
+        agent._has_default_mcp_toolset = True
+        with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=self._fake_make_mcp_toolset()):
+            tools = agent._resolve_session_tools({"dak_mode_tool_names": []})
+        self.assertEqual(self._toolsets(tools), {("http://default", "http"): None})
+
+    def test_no_mode_switch_means_no_mcp_toolset(self):
+        agent = self._agent({})
+        agent._has_default_mcp_toolset = True
+        with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=self._fake_make_mcp_toolset()):
+            tools = agent._resolve_session_tools({})
+        self.assertEqual(self._toolsets(tools), {})
+
+    def test_ap2_attaches_wallet_tools_alongside_a_paid_skill(self):
+        agent = self._agent({"paid": {"name": "paid", "tools": []}})
+        agent._enable_ap2 = True
+        names = {getattr(t, "name", None) for t in agent._resolve_session_tools({"dak_active_skills": ["paid"]})}
+        self.assertTrue(set(WALLET_TOOL_NAMES) <= names)
+
+    def test_mcp_toolsets_are_reused_across_turns_and_sessions(self):
+        """A fresh McpToolset per turn would leak one MCP connection per turn."""
+        agent = self._agent({"plain": {"name": "plain", "tools": ["t2"]}})
+        with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=self._fake_make_mcp_toolset()) as make:
+            first = agent._resolve_session_tools({"dak_active_skills": ["plain"]})
+            second = agent._resolve_session_tools({"dak_active_skills": ["plain"]})
+        self.assertEqual(make.call_count, 1)
+        self.assertIs(first[-1], second[-1])
+
+
+class TestModeSwitchResetsSkills(unittest.IsolatedAsyncioTestCase):
+    async def test_switch_replaces_active_skills_with_selection(self):
+        from unittest.mock import MagicMock
+
+        agent = _make_agent_with_demo_skill()
+        ctx = MagicMock()
+        ctx._invocation_context.agent = agent.model_copy()
+        ctx.session.events = []
+        ctx.state = {"dak_active_skills": ["demo"]}
+        with patch("dak_agent.mode_manager.ModeManager.generate_mode_config",
+                   return_value=("Focused.", [], [])):
+            await agent._perform_mode_switch(ctx)
+        self.assertEqual(ctx.state["dak_active_skills"], [])
+        self.assertNotIn("Use the demo skill.", ctx._invocation_context.agent.instruction)
+
+
+class TestEnableSkillMissingDirectory(unittest.IsolatedAsyncioTestCase):
+    async def test_reports_error_and_does_not_record_skill(self):
+        from unittest.mock import AsyncMock, MagicMock
+
+        agent = _make_agent_with_demo_skill()
+        agent.skill_registry.find_skill_dir.return_value = None
+        enable = next(t for t in agent.tools if t.name == "enable_skill").func
+        ctx = MagicMock()
+        ctx.state = {}
+        ctx._invocation_context.agent = agent
+        with patch("dak_agent.remote_tools.discover_remote_tools", AsyncMock(return_value={})):
+            result = await enable(skill_name="demo", tool_context=ctx)
+        self.assertIn("not found", result)
+        self.assertNotIn("dak_active_skills", ctx.state)

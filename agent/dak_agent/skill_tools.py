@@ -194,6 +194,9 @@ def make_skill_tools(agent) -> List[FunctionTool]:
         if skill:
             if skill_name in active_skills:
                 return f"Skill '{skill_name}' is already active."
+            if not agent.skill_registry.find_skill_dir(skill_name):
+                logger.warning(f"Skill directory for {skill_name} not found in any configured paths.")
+                return f"Error: Skill directory for {skill_name} not found."
         elif skill_name in agent.available_remote_tools:
             if skill_name in active_skills:
                 return f"Tool '{skill_name}' is already active."

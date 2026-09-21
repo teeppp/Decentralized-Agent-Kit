@@ -54,7 +54,7 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         )
 
         # Mock generate_config
-        mock_generate_config.return_value = ("New Instruction", [self.mock_tools[0]], [])
+        mock_generate_config.return_value = ("New Instruction", ["tool1"], [])
 
         # Simulate callback (first turn)
         context = MagicMock()
@@ -119,7 +119,7 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         )
 
         # Mock generate_config
-        mock_generate_config.return_value = ("New Instruction", [self.mock_tools[0]], [])
+        mock_generate_config.return_value = ("New Instruction", ["tool1"], [])
 
         # Create LLM response with switch_mode tool call
         llm_response = MagicMock()
@@ -154,7 +154,7 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
             instruction="Initial instruction",
             tools=self.mock_tools
         )
-        mock_generate_config.return_value = ("New Instruction", [self.mock_tools[0]], [])
+        mock_generate_config.return_value = ("New Instruction", ["tool1"], [])
 
         session_a = MagicMock()
         session_a.session.events = []

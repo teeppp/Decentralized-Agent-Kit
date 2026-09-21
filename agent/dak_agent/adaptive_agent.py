@@ -35,6 +35,7 @@ class AdaptiveAgent(LlmAgent):
     _all_available_tools: List[Any] = PrivateAttr()
     _builtin_tools: List[Any] = PrivateAttr()  # FunctionTools that never get filtered
     _has_default_mcp_toolset: bool = PrivateAttr(default=False)
+    _mcp_toolset_cache: Dict[Tuple[str, str, frozenset], Any] = PrivateAttr(default_factory=dict)
     _base_instruction: str = PrivateAttr(default="")
     _original_callback: Optional[Any] = PrivateAttr(default=None)
     _disable_mode_switching: bool = PrivateAttr(default=False)
@@ -228,7 +229,7 @@ class AdaptiveAgent(LlmAgent):
                 mcp_groups[(self._mcp_url, "http")] = set()
 
         for (url, conn_type), names in mcp_groups.items():
-            tools.append(skill_tools.make_mcp_toolset(url, conn_type, sorted(names) or None))
+            tools.append(self._cached_mcp_toolset(url, conn_type, names))
 
         if self.ap2_enabled and "solana_wallet" not in active_skills and any(
             s != "solana_wallet" for s in active_skills
@@ -237,15 +238,32 @@ class AdaptiveAgent(LlmAgent):
 
         return tools
 
+    def _cached_mcp_toolset(self, url: str, conn_type: str, names) -> Any:
+        """One McpToolset per (server, tool filter), shared by every session.
+        Each McpToolset owns an MCP session manager whose connection is only
+        released by that same manager, so building a fresh one per turn would
+        leak a connection per turn. The filter is never mutated after
+        creation, so sharing across sessions is safe."""
+        key = (url, conn_type, frozenset(names))
+        toolset = self._mcp_toolset_cache.get(key)
+        if toolset is None:
+            toolset = skill_tools.make_mcp_toolset(url, conn_type, sorted(names) or None)
+            self._mcp_toolset_cache[key] = toolset
+        return toolset
+
     def _live_agent(self, context: CallbackContext) -> "AdaptiveAgent":
-        """The per-invocation copy google-adk v2 actually runs (falls back to
-        `self` when the context doesn't carry one, e.g. in simpler unit tests
-        that call these methods directly)."""
+        """The per-invocation copy google-adk v2 actually runs. Falls back to
+        `self` only when the context carries no invocation agent (unit tests
+        calling these methods directly); in production that would write this
+        session's config onto the shared root, so it is logged."""
         try:
             live = context._invocation_context.agent
         except Exception:
             live = None
-        return live if live is not None else self
+        if live is None:
+            logger.warning("No live invocation agent on context; applying session config to the root agent.")
+            return self
+        return live
 
     def _apply_session_config(self, context: CallbackContext) -> None:
         """Recompute this session's instruction/tools/active_skills from
@@ -405,11 +423,12 @@ class AdaptiveAgent(LlmAgent):
                 requested_focus,
             )
 
-            # Merge the meta-agent's selected skills into this session's active
-            # skills. `_resolve_session_instruction`/`_resolve_session_tools`
-            # append each active skill's instructions/local tools uniformly on
-            # every rebuild, so they must not also be appended here.
-            active_skills = list(context.state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
+            # A mode switch replaces the session's active skills with the
+            # meta-agent's selection (a new, focused mode drops the previous
+            # mode's skills). `_resolve_session_instruction`/
+            # `_resolve_session_tools` append each active skill's
+            # instructions/tools on every rebuild, so they are not added here.
+            active_skills: List[str] = []
             for skill_name in selected_skills or []:
                 if skill_name in active_skills:
                     continue
