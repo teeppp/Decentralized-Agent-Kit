@@ -133,6 +133,10 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         context.session.events = []
         # Bypass initial turn trigger for this session.
         context.state = {FIRST_TURN_DONE_KEY: True}
+        # google-adk v2 runs the invocation on a copy of the agent; point the
+        # mock's "live copy" back at `agent` itself so the assertions below
+        # can observe the switch (see AdaptiveAgent._live_agent).
+        context._invocation_context.agent = agent
 
         await agent._wrapped_callback(llm_response=llm_response, callback_context=context)
 

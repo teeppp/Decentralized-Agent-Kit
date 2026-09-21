@@ -26,36 +26,27 @@ _SOLANA_WALLET_TOOLS_FILE = os.path.join(
     os.path.dirname(__file__), "..", "skills", "solana_wallet", "tools.py"
 )
 
+# Session-state keys (ADK persists `callback_context.state`/`tool_context.state`
+# per session, even across process restarts when a database SessionService is
+# used — see enforcer.py's PLAN_KEY for the established pattern). AdaptiveAgent
+# is a single instance shared by every session, so the enabled skills and the
+# mode-switch outcome must live here rather than as mutable attributes on the
+# agent itself. `AdaptiveAgent._resolve_session_instruction`/
+# `_resolve_session_tools` read these to rebuild the session's effective
+# instruction/tools on demand (see `_apply_session_config`).
+STATE_ACTIVE_SKILLS = "dak_active_skills"          # List[str]
+STATE_MODE_INSTRUCTION = "dak_mode_instruction"    # Optional[str]
+STATE_MODE_TOOL_NAMES = "dak_mode_tool_names"      # Optional[List[str]]
 
-def _invalidate_canonical_tools_cache(tool_context) -> None:
-    """Clear google-adk v2's per-invocation tool cache so mid-run tool additions
-    (enable_skill) are visible on the next turn of the same run. No-op on v1 or
-    when the context is unavailable."""
+
+def invalidate_canonical_tools_cache(context) -> None:
+    """Clear google-adk v2's per-invocation tool cache so a tool/instruction
+    rebuild (mode switch, enable_skill, or the turn-start restore) is visible
+    for the rest of this invocation. No-op on v1 or when unavailable."""
     try:
-        tool_context._invocation_context.canonical_tools_cache = None
+        context._invocation_context.canonical_tools_cache = None
     except Exception:
         pass
-
-
-def _sync_to_live_agent(tool_context, source_agent) -> None:
-    """google-adk v2 executes each invocation on a per-run *copy* of the agent, so
-    mutations to the root agent are invisible to the running invocation. Share the
-    updated tools/instruction/active_skills onto the live invocation agent so tools
-    enabled mid-run are callable in the same run. No-op on v1 / without context."""
-    try:
-        live = tool_context._invocation_context.agent
-    except Exception:
-        return
-    if live is None or live is source_agent:
-        return
-    try:
-        live.tools = source_agent.tools
-        live.instruction = source_agent.instruction
-        # `active_skills` is a read-only property; share the backing list.
-        if hasattr(source_agent, "_active_skills"):
-            live._active_skills = source_agent._active_skills
-    except Exception as e:
-        logger.warning("Could not sync enabled skill to live agent: %s", e)
 
 
 def _import_module_from_path(module_name: str, file_path: str):
@@ -191,80 +182,32 @@ def make_skill_tools(agent) -> List[FunctionTool]:
         """
         await agent.ensure_remote_tools_loaded()
 
+        if tool_context is None:
+            # ADK always injects tool_context for a FunctionTool whose function
+            # declares this parameter; without it there is no session to record
+            # the change against, so failing loudly beats silently no-op'ing.
+            return "Error: enable_skill requires ADK's tool_context to record the change in session state."
+
         skill = agent.skill_registry.get_skill(skill_name) if agent.skill_registry else None
+        active_skills = list(tool_context.state.get(STATE_ACTIVE_SKILLS, []))
 
         if skill:
-            if skill_name in agent.active_skills:
+            if skill_name in active_skills:
                 return f"Skill '{skill_name}' is already active."
         elif skill_name in agent.available_remote_tools:
-            if skill_name in agent.active_skills:
+            if skill_name in active_skills:
                 return f"Tool '{skill_name}' is already active."
         else:
             return f"Error: Skill or Tool '{skill_name}' not found."
 
-        agent.active_skills.append(skill_name)
+        active_skills.append(skill_name)
+        tool_context.state[STATE_ACTIVE_SKILLS] = active_skills
 
-        current_tool_names = {getattr(t, "name", None) for t in agent.tools} - {None}
-
-        if skill:
-            instructions = skill.get("instructions")
-            if instructions:
-                agent.instruction += f"\n\n# Skill: {skill_name}\n{instructions}"
-
-            skill_dir = agent.skill_registry.find_skill_dir(skill_name)
-            if not skill_dir:
-                logger.warning(f"Skill directory for {skill_name} not found in any configured paths.")
-                return f"Error: Skill directory for {skill_name} not found."
-
-            local_tools, mcp_tool_names = load_local_tools_from_skill(
-                skill_name, skill_dir, skill.get("tools", []), current_tool_names
-            )
-            if local_tools:
-                agent.tools.extend(local_tools)
-        else:
-            # Zero-config remote tool: comes straight from MCP
-            agent.instruction += (
-                f"\n\n# Tool Enabled: {skill_name}\n"
-                f"You have enabled the raw tool '{skill_name}'. Use it according to its schema."
-            )
-            mcp_tool_names = [skill_name] if skill_name not in current_tool_names else []
-
-        if mcp_tool_names:
-            # A skill may target a specific MCP server from agent_config.yaml;
-            # otherwise use the default server.
-            server_cfg = None
-            if skill and skill.get("mcp_server"):
-                server_cfg = agent.mcp_servers.get(skill["mcp_server"])
-                if server_cfg:
-                    logger.info(
-                        f"Skill '{skill_name}' uses MCP server '{skill['mcp_server']}' "
-                        f"at {server_cfg.get('url')} ({server_cfg.get('type', 'http')})"
-                    )
-
-            target_url = server_cfg.get("url") if server_cfg else agent.mcp_url
-            target_type = server_cfg.get("type", "http") if server_cfg else "http"
-
-            if target_url:
-                try:
-                    toolset = make_mcp_toolset(target_url, target_type, mcp_tool_names)
-                    agent.tools.append(toolset)
-                    logger.info(f"Added filtered McpToolset for tools: {mcp_tool_names} via {target_url}")
-                except Exception as e:
-                    logger.error(f"Failed to create McpToolset for {skill_name}: {e}")
-                    return f"Error enabling {skill_name}: Failed to connect to tools. {e}"
-
-        # AP2: make sure wallet tools are available alongside any paid-service skill
-        if agent.ap2_enabled and skill_name != "solana_wallet" and "solana_wallet" not in agent.active_skills:
-            existing = {getattr(t, "name", None) for t in agent.tools} - {None}
-            agent.tools.extend(load_solana_wallet_tools(existing))
-
-        # google-adk v2 runs each invocation on a *copy* of the agent, so the
-        # mutations above (on the closure/root agent) are invisible to the current
-        # run. Mirror the updated tools/instruction/active_skills onto the live
-        # invocation agent (sharing the same objects) so the just-enabled tools are
-        # callable within this same run, and invalidate the per-invocation tool cache.
-        _sync_to_live_agent(tool_context, agent)
-        _invalidate_canonical_tools_cache(tool_context)
+        # Recompute this session's effective instruction/tools from state (now
+        # including `skill_name`) and apply them to the live per-invocation
+        # agent. The root/closure `agent` above is never mutated, so this
+        # session's skill never leaks into another session's copy.
+        agent._apply_session_config(tool_context)
 
         return f"'{skill_name}' enabled."
 

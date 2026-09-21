@@ -101,25 +101,91 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestSyncToLiveAgent(unittest.TestCase):
-    def test_shares_tools_instruction_and_active_skills(self):
-        """ADK v2 runs on a per-invocation copy of the agent; enabled skills must
-        reach that copy (active_skills is a read-only property)."""
+def _make_agent_with_demo_skill():
+    """An AdaptiveAgent whose registry has one instructions-only skill "demo",
+    for tests that don't care about local-tool/MCP loading specifics."""
+    from unittest.mock import MagicMock
+
+    from dak_agent.adaptive_agent import AdaptiveAgent
+    from dak_agent.skill_registry import SkillRegistry
+
+    agent = AdaptiveAgent(model="test-model", name="root", instruction="base", tools=[])
+    agent.skill_registry = MagicMock(spec=SkillRegistry)
+    agent.skill_registry.find_skill_dir.return_value = "/tmp/nonexistent-demo-skill-dir"
+    agent.skill_registry.get_skill.side_effect = lambda name: {
+        "name": "demo", "instructions": "Use the demo skill.", "tools": [],
+    } if name == "demo" else None
+    return agent
+
+
+class TestApplySessionConfig(unittest.TestCase):
+    """`_apply_session_config` rebuilds a session's instruction/tools from its
+    `state` and applies them to the live per-invocation agent copy, never to
+    the shared root instance (agent/dak_agent/adaptive_agent.py). Regression
+    coverage for the PBI #133 bug: one AdaptiveAgent instance is shared by
+    every session in the process."""
+
+    def test_root_agent_is_never_mutated(self):
         from unittest.mock import MagicMock
 
-        from dak_agent.adaptive_agent import AdaptiveAgent
-        from dak_agent.skill_tools import _sync_to_live_agent
-
-        root = AdaptiveAgent(model="test-model", name="root", instruction="base", tools=[])
-        live = root.model_copy()
-        root.instruction += "\n# Skill: filesystem"
-        root.active_skills.append("filesystem")
-
+        agent = _make_agent_with_demo_skill()
+        live = agent.model_copy()
         ctx = MagicMock()
         ctx._invocation_context.agent = live
-        with self.assertNoLogs("dak_agent.skill_tools", level="WARNING"):
-            _sync_to_live_agent(ctx, root)
+        ctx.state = {"dak_active_skills": ["demo"]}
 
-        self.assertEqual(live.instruction, root.instruction)
-        self.assertIs(live.tools, root.tools)
-        self.assertEqual(live.active_skills, ["filesystem"])
+        agent._apply_session_config(ctx)
+
+        self.assertIn("Use the demo skill.", live.instruction)
+        self.assertEqual(agent.instruction, "base")
+        self.assertIsNot(live.tools, agent.tools)
+
+    def test_two_sessions_do_not_share_enabled_skills(self):
+        """Regression test: session A enabling a skill must not change what
+        session B's live copy resolves to, even though both invocations share
+        the same root AdaptiveAgent instance."""
+        from unittest.mock import MagicMock
+
+        agent = _make_agent_with_demo_skill()
+        live_a = agent.model_copy()
+        live_b = agent.model_copy()
+        ctx_a = MagicMock()
+        ctx_a._invocation_context.agent = live_a
+        ctx_a.state = {"dak_active_skills": ["demo"]}
+        ctx_b = MagicMock()
+        ctx_b._invocation_context.agent = live_b
+        ctx_b.state = {}
+
+        agent._apply_session_config(ctx_a)
+        agent._apply_session_config(ctx_b)
+
+        self.assertIn("Use the demo skill.", live_a.instruction)
+        self.assertNotIn("Use the demo skill.", live_b.instruction)
+
+    def test_restored_after_new_instance_for_same_session(self):
+        """Regression test: a brand-new AdaptiveAgent instance (e.g. after a
+        process restart) continuing the same session's `state` must restore
+        the skill enabled by a previous instance."""
+        from unittest.mock import MagicMock
+
+        state = {"dak_active_skills": ["demo"]}
+
+        old_instance = _make_agent_with_demo_skill()
+        old_live = old_instance.model_copy()
+        ctx = MagicMock()
+        ctx._invocation_context.agent = old_live
+        ctx.state = state
+        old_instance._apply_session_config(ctx)
+        self.assertIn("Use the demo skill.", old_live.instruction)
+
+        # A fresh instance, as if the process were redeployed/restarted.
+        new_instance = _make_agent_with_demo_skill()
+        new_live = new_instance.model_copy()
+        ctx2 = MagicMock()
+        ctx2._invocation_context.agent = new_live
+        ctx2.state = state  # same session's persisted state
+
+        new_instance._apply_session_config(ctx2)
+
+        self.assertIn("Use the demo skill.", new_live.instruction)
+        self.assertEqual(new_live.active_skills, ["demo"])

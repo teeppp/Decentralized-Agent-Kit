@@ -78,6 +78,17 @@ def get_tool_func(agent, tool_name):
     return getattr(tool, 'fn', getattr(tool, 'func', None))
 
 
+def make_tool_context(agent):
+    """A ToolContext whose session `state` is a real dict and whose "live
+    invocation copy" is `agent` itself, so `enable_skill`'s state writes are
+    both real and immediately observable on `agent.instruction`/`agent.tools`
+    (see AdaptiveAgent._apply_session_config/_live_agent)."""
+    ctx = MagicMock()
+    ctx.state = {}
+    ctx._invocation_context.agent = agent
+    return ctx
+
+
 @pytest.mark.asyncio
 async def test_list_skills(mock_agent):
     func = get_tool_func(mock_agent, 'list_skills')
@@ -93,7 +104,7 @@ async def test_enable_skill(mock_agent):
 
     # Skill has no local tools.py, so all tools fall back to MCP
     with patch('dak_agent.skill_tools.os.path.exists', return_value=False):
-        result = await func(skill_name="filesystem")
+        result = await func(skill_name="filesystem", tool_context=make_tool_context(mock_agent))
 
     assert "'filesystem' enabled." in result
     assert "# Skill: filesystem" in mock_agent.instruction
@@ -108,7 +119,7 @@ async def test_enable_skill(mock_agent):
 async def test_enable_nonexistent_skill(mock_agent):
     func = get_tool_func(mock_agent, 'enable_skill')
 
-    result = await func(skill_name="fake-skill")
+    result = await func(skill_name="fake-skill", tool_context=make_tool_context(mock_agent))
 
     assert "Error" in result
     assert "not found" in result
@@ -128,7 +139,7 @@ async def test_zero_config_discovery(mock_agent):
     # 2. Enable Remote Tool
     func_enable = get_tool_func(mock_agent, 'enable_skill')
 
-    result = await func_enable(skill_name="remote_tool_1")
+    result = await func_enable(skill_name="remote_tool_1", tool_context=make_tool_context(mock_agent))
 
     assert "'remote_tool_1' enabled." in result
     assert "# Tool Enabled: remote_tool_1" in mock_agent.instruction
