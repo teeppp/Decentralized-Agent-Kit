@@ -47,7 +47,8 @@ fake-LLM はモデル名ごとに応答をスクリプトできる制御API（`/
 
 ## 保守・検証の入口
 
-- 依存更新の判定・新技術ウォッチ・依存の新機能・憲章見直しは `cd maintenance && uv run dak-maint <triage|watch|feature-sync|charter-review>`（`maintenance/README.md`）。判断基準は `docs/CHARTER.md`。
+- 新技術ウォッチ・依存の新機能・憲章見直しは GitHub Actions が定期実行する（`tech-watch` / `feature-sync` / `charter-review`）。今すぐ回すときは `gh workflow run <name>.yml`。依存更新の判定は Dependabot の PR ごとに `dependency-triage` が走る。
+- ロジックは `maintenance/`（CLI `dak-maint`、`maintenance/README.md`）、判断基準は `docs/CHARTER.md`。手元で `dak-maint` の `watch` / `feature-sync` / `charter-review` を回すには `MAINT_LLM_*`（`watch` と `charter-review` は `TAVILY_API_KEY` も）が要る。`triage` は無くても動く。
 - テストは上の「テスト 3 層」。
 - ランタイムの DAK スキル（`agent/skills/`）の作り方は `agent/skills/README.md`。
 
