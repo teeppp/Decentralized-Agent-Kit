@@ -1,12 +1,11 @@
 """AdaptiveAgent: an LlmAgent with Dynamic Mode Switching and Agent Skills."""
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, MutableMapping, Optional, Tuple
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_response import LlmResponse
-from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
 from pydantic import ConfigDict, Field, PrivateAttr
 import inspect
 
@@ -35,11 +34,14 @@ class AdaptiveAgent(LlmAgent):
     _mode_manager: ModeManager = PrivateAttr()
     _all_available_tools: List[Any] = PrivateAttr()
     _builtin_tools: List[Any] = PrivateAttr()  # FunctionTools that never get filtered
+    _has_default_mcp_toolset: bool = PrivateAttr(default=False)
+    _mcp_toolset_cache: Dict[Tuple[str, str, frozenset], Any] = PrivateAttr(default_factory=dict)
+    _base_instruction: str = PrivateAttr(default="")
     _original_callback: Optional[Any] = PrivateAttr(default=None)
     _disable_mode_switching: bool = PrivateAttr(default=False)
     _mcp_url: str = PrivateAttr(default="")
     _mcp_servers: Dict[str, Dict] = PrivateAttr(default_factory=dict)
-    _active_skills: List[str] = PrivateAttr(default=[])
+    _active_skills: List[str] = PrivateAttr(default_factory=list)
     _payment_handler: Optional[PaymentHandler] = PrivateAttr(default=None)
     _enable_ap2: bool = PrivateAttr(default=False)
 
@@ -71,6 +73,7 @@ class AdaptiveAgent(LlmAgent):
             "name": name,
             "instruction": instruction,
             "tools": builtin_tools,
+            "before_agent_callback": self._restore_session_config,
             "after_model_callback": self._wrapped_callback,
             "on_tool_error_callback": self._on_tool_error,
         }
@@ -99,6 +102,15 @@ class AdaptiveAgent(LlmAgent):
         self._mode_manager = ModeManager(model_name=model_name_str)
         self._all_available_tools = all_tools
         self._builtin_tools = builtin_tools
+        self._has_default_mcp_toolset = any("Toolset" in type(t).__name__ for t in all_tools)
+        # `self.instruction`/`self.tools` are never reassigned after this point:
+        # google-adk v2 runs each invocation on a shallow copy of this (single,
+        # process-wide) agent, so mutating them here would leak one session's
+        # enabled skills/mode into every other session's copy. Session-specific
+        # config is rebuilt from `callback_context.state` onto the live copy by
+        # `_apply_session_config` instead (see `_restore_session_config`,
+        # `skill_tools.enable_skill`, `_perform_mode_switch`).
+        self._base_instruction = instruction
         self._original_callback = after_model_callback
         self._disable_mode_switching = disable_mode_switching
 
@@ -142,6 +154,139 @@ class AdaptiveAgent(LlmAgent):
         if self.available_remote_tools:
             return
         self.available_remote_tools = await remote_tools.discover_remote_tools(self._mcp_url)
+
+    # --- Session-scoped config (instruction/tools/active_skills) ---
+    #
+    # One AdaptiveAgent instance is shared by every session in the process,
+    # and google-adk v2 hands each invocation a shallow copy of it. `self`
+    # (this root instance) is therefore never mutated past __init__: doing so
+    # would leak one session's enabled skills/mode into every other session's
+    # copy. Instead, the enabled skills and mode-switch outcome are recorded
+    # in `callback_context.state` (ADK persists this per session, across
+    # process restarts too, when a database SessionService is used — same
+    # pattern as `enforcer.py`'s PLAN_KEY), and `_apply_session_config`
+    # recomputes the effective instruction/tools from that state and applies
+    # them onto the live per-invocation copy.
+
+    def _resolve_session_instruction(self, state: MutableMapping[str, Any]) -> str:
+        """Rebuild this session's system instruction from its state."""
+        mode_instruction = state.get(skill_tools.STATE_MODE_INSTRUCTION)
+        instruction = mode_instruction if mode_instruction else self._base_instruction
+
+        for skill_name in state.get(skill_tools.STATE_ACTIVE_SKILLS, []):
+            skill = self.skill_registry.get_skill(skill_name) if self.skill_registry else None
+            if skill and skill.get("instructions"):
+                instruction += f"\n\n# Skill: {skill_name}\n{skill['instructions']}"
+            elif skill_name in self.available_remote_tools:
+                instruction += (
+                    f"\n\n# Tool Enabled: {skill_name}\n"
+                    f"You have enabled the raw tool '{skill_name}'. Use it according to its schema."
+                )
+        return instruction
+
+    def _resolve_session_tools(self, state: MutableMapping[str, Any]) -> List[Any]:
+        """Rebuild this session's tool list from its state."""
+        active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
+        tools = list(self._builtin_tools)
+        current_names = {getattr(t, "name", None) for t in tools} - {None}
+        mcp_groups: Dict[Tuple[str, str], set] = {}
+
+        def add_mcp_names(names, server_cfg: Optional[Dict] = None):
+            missing = [n for n in names if n not in current_names]
+            if not missing:
+                return
+            target_url = server_cfg.get("url") if server_cfg else self._mcp_url
+            target_type = server_cfg.get("type", "http") if server_cfg else "http"
+            if target_url:
+                mcp_groups.setdefault((target_url, target_type), set()).update(missing)
+
+        for skill_name in active_skills:
+            skill = self.skill_registry.get_skill(skill_name) if self.skill_registry else None
+            if skill:
+                skill_dir = self.skill_registry.find_skill_dir(skill_name)
+                if not skill_dir:
+                    logger.warning(f"Skill directory for {skill_name} not found in any configured paths.")
+                    continue
+                local_tools, mcp_fallback = skill_tools.load_local_tools_from_skill(
+                    skill_name, skill_dir, skill.get("tools", []), current_names
+                )
+                for tool in local_tools:
+                    name = getattr(tool, "name", None)
+                    if name and name not in current_names:
+                        tools.append(tool)
+                        current_names.add(name)
+                server_cfg = self.mcp_servers.get(skill["mcp_server"]) if skill.get("mcp_server") else None
+                add_mcp_names(mcp_fallback, server_cfg)
+            elif skill_name in self.available_remote_tools:
+                add_mcp_names([skill_name])
+
+        if skill_tools.STATE_MODE_TOOL_NAMES in state:
+            mode_tool_names = state.get(skill_tools.STATE_MODE_TOOL_NAMES) or []
+            add_mcp_names(mode_tool_names)
+            if not mode_tool_names and not mcp_groups and self._has_default_mcp_toolset:
+                # A mode switch selected no tools; fall back to the full,
+                # unfiltered default MCP server rather than stranding the agent.
+                mcp_groups[(self._mcp_url, "http")] = set()
+
+        for (url, conn_type), names in mcp_groups.items():
+            tools.append(self._cached_mcp_toolset(url, conn_type, names))
+
+        if self.ap2_enabled and "solana_wallet" not in active_skills and any(
+            s != "solana_wallet" for s in active_skills
+        ):
+            tools.extend(skill_tools.load_solana_wallet_tools(current_names))
+
+        return tools
+
+    def _cached_mcp_toolset(self, url: str, conn_type: str, names) -> Any:
+        """One McpToolset per (server, tool filter), shared by every session.
+        Each McpToolset owns an MCP session manager whose connection is only
+        released by that same manager, so building a fresh one per turn would
+        leak a connection per turn. The filter is never mutated after
+        creation, so sharing across sessions is safe."""
+        key = (url, conn_type, frozenset(names))
+        toolset = self._mcp_toolset_cache.get(key)
+        if toolset is None:
+            toolset = skill_tools.make_mcp_toolset(url, conn_type, sorted(names) or None)
+            self._mcp_toolset_cache[key] = toolset
+        return toolset
+
+    def _live_agent(self, context: CallbackContext) -> "AdaptiveAgent":
+        """The per-invocation copy google-adk v2 actually runs. Falls back to
+        `self` only when the context carries no invocation agent (unit tests
+        calling these methods directly); in production that would write this
+        session's config onto the shared root, so it is logged."""
+        try:
+            live = context._invocation_context.agent
+        except Exception:
+            live = None
+        if live is None:
+            logger.warning("No live invocation agent on context; applying session config to the root agent.")
+            return self
+        return live
+
+    def _apply_session_config(self, context: CallbackContext) -> None:
+        """Recompute this session's instruction/tools/active_skills from
+        `context.state` and apply them onto the live per-invocation agent."""
+        state = context.state
+        live = self._live_agent(context)
+        live.instruction = self._resolve_session_instruction(state)
+        live.tools = self._resolve_session_tools(state)
+        live._active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
+        skill_tools.invalidate_canonical_tools_cache(context)
+
+    async def _restore_session_config(self, callback_context: CallbackContext) -> None:
+        """`before_agent_callback`: runs once at the start of every invocation,
+        before any model call. Without this, a session resumed on a fresh
+        invocation (a new turn, or a brand-new AdaptiveAgent instance in a
+        redeployed process) would start from this shared instance's static
+        construction-time defaults, forgetting skills/mode enabled earlier in
+        the same session."""
+        try:
+            self._apply_session_config(callback_context)
+        except Exception as e:
+            logger.error(f"CRITICAL ERROR restoring session config: {e}", exc_info=True)
+        return None
 
     # --- Callbacks ---
 
@@ -247,10 +392,8 @@ class AdaptiveAgent(LlmAgent):
 
             # Expand MCP toolsets into individual tools so the Meta-Agent can see them
             expanded_available_tools = []
-            original_mcp_toolset = None
             for tool in self._all_available_tools:
                 if "Toolset" in type(tool).__name__:
-                    original_mcp_toolset = tool
                     if hasattr(tool, "tool_filter"):
                         tool.tool_filter = None  # clear filter to see all tools
                     try:
@@ -280,53 +423,28 @@ class AdaptiveAgent(LlmAgent):
                 requested_focus,
             )
 
-            # Append instructions of the selected skills
+            # A mode switch replaces the session's active skills with the
+            # meta-agent's selection (a new, focused mode drops the previous
+            # mode's skills). `_resolve_session_instruction`/
+            # `_resolve_session_tools` append each active skill's
+            # instructions/tools on every rebuild, so they are not added here.
+            active_skills: List[str] = []
             for skill_name in selected_skills or []:
-                skill = self.skill_registry.get_skill(skill_name) if self.skill_registry else None
-                if skill and "instructions" in skill:
-                    new_instruction += f"\n\n# Skill: {skill_name}\n{skill['instructions']}"
-                elif skill_name in self.available_remote_tools:
-                    new_instruction += (
-                        f"\n\n# Tool Enabled: {skill_name}\n"
-                        f"You have enabled the raw tool '{skill_name}'. Use it according to its schema."
-                    )
+                if skill_name in active_skills:
+                    continue
+                is_known_skill = self.skill_registry and self.skill_registry.get_skill(skill_name)
+                if is_known_skill or skill_name in self.available_remote_tools:
+                    active_skills.append(skill_name)
                 else:
                     logger.warning(f"Skill '{skill_name}' selected but not found.")
 
-            # Build the new tool list: built-ins always survive
-            new_tools = list(self._builtin_tools)
-            if selected_tool_names:
-                if original_mcp_toolset is not None:
-                    if hasattr(original_mcp_toolset, "tool_filter"):
-                        original_mcp_toolset.tool_filter = selected_tool_names
-                        logger.info(f"Updated McpToolset filter to: {selected_tool_names}")
-                    new_tools.append(original_mcp_toolset)
-                elif self._mcp_url:
-                    try:
-                        new_tools.append(
-                            McpToolset(
-                                connection_params=StreamableHTTPConnectionParams(url=self._mcp_url),
-                                tool_filter=selected_tool_names,
-                                require_confirmation=False,
-                            )
-                        )
-                        logger.info(f"Created McpToolset with tools: {selected_tool_names}")
-                    except Exception as e:
-                        logger.error(f"Failed to create McpToolset: {e}")
-            elif original_mcp_toolset is not None:
-                # Nothing selected: keep the original toolset as a fallback
-                new_tools.append(original_mcp_toolset)
+            context.state[skill_tools.STATE_ACTIVE_SKILLS] = active_skills
+            context.state[skill_tools.STATE_MODE_INSTRUCTION] = new_instruction
+            context.state[skill_tools.STATE_MODE_TOOL_NAMES] = list(selected_tool_names or [])
 
-            self.instruction = new_instruction
-            self.tools = new_tools
-            logger.info(f"Updated agent tools: {[t.name for t in self.tools if hasattr(t, 'name')]}")
-
-            # google-adk v2 caches resolved tools per invocation; invalidate so the
-            # newly switched toolset takes effect within this run.
-            try:
-                context._invocation_context.canonical_tools_cache = None
-            except Exception:
-                pass
+            self._apply_session_config(context)
+            live_tools = self._live_agent(context).tools
+            logger.info(f"Updated agent tools: {[t.name for t in live_tools if hasattr(t, 'name')]}")
 
         except Exception as e:
             # Never crash the agent on a failed switch
