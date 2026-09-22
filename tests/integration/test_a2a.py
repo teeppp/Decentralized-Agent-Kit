@@ -12,6 +12,7 @@ import pytest
 
 from conftest import AGENT_URL, APP_NAME
 
+MODEL = "fake-default"
 AGENT_CARD_URL = f"{AGENT_URL}/a2a/{APP_NAME}/.well-known/agent-card.json"
 A2A_RPC_URL = f"{AGENT_URL}/a2a/{APP_NAME}"
 
@@ -32,10 +33,11 @@ def test_agent_card_is_served(agent_card):
 def test_agent_card_carries_a_top_level_transport_url(agent_card):
     """The card must keep the top-level `url` + `preferredTransport` fields.
 
-    google-adk's RemoteA2aAgent validates the card against a2a-sdk 0.x's
-    pydantic AgentCard, which requires `url`. a2a-sdk 1.x drops it in favour of
-    a `supportedInterfaces` list, and resolution then fails with
-    "no compatible transports found" -- including between two DAK agents.
+    This guards the `a2a-sdk<1` pin in agent/pyproject.toml. a2a-sdk 1.x serves
+    the card with `url` moved into `supportedInterfaces`, which 0.3 peers reject
+    ("url Field required"); and because DAK's card declares protocolVersion
+    0.2.6, 1.x clients find "no compatible transports". Update this test
+    together with the card when migrating to 1.x.
     """
     assert "url" in agent_card, (
         f"agent card has no top-level 'url' (a2a-sdk 1.x wire format?): {agent_card}"
@@ -46,7 +48,8 @@ def test_agent_card_carries_a_top_level_transport_url(agent_card):
 
 def test_a2a_message_send_round_trip(fake_llm):
     """A peer can drive the agent over A2A JSON-RPC and get its reply back."""
-    fake_llm.script("fake-default", [fake_llm.text("A2A pong from DAK.")])
+    fake_llm.clear(MODEL)
+    fake_llm.script(MODEL, [fake_llm.text("A2A pong from DAK.")])
 
     payload = {
         "jsonrpc": "2.0",
