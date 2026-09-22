@@ -8,9 +8,8 @@ class TestAp2Protocol:
     def agent(self):
         # Mock dependencies to avoid full initialization
         with patch('dak_agent.adaptive_agent.ModeManager'), \
-             patch('dak_agent.adaptive_agent.SkillRegistry'), \
-             patch('dak_agent.adaptive_agent.McpToolset'):
-            
+             patch('dak_agent.adaptive_agent.SkillRegistry'):
+
             agent = AdaptiveAgent(model="test-model", name="test_agent", instruction="test-instruction", tools=[])
             # Manually set private attributes that would be set in __init__
             agent._enable_ap2 = True

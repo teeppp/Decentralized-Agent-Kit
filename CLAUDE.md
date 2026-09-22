@@ -45,14 +45,15 @@ fake-LLM はモデル名ごとに応答をスクリプトできる制御API（`/
 - **継続テスト**: `nightly-eval`（小型 Ollama）+ golden replay の自動増殖。`docs/eval/`。
 - **すべての作業は GitHub Project 管理**（`scripts/setup/bootstrap_project.sh`）。
 
-## リポジトリ専用スラッシュコマンド（`.claude/commands/`）
+## 保守・検証の入口
 
-- `/triage-deps` — 依存更新を `dak-maint` で判定
-- `/sync-feature` — 依存の新機能を調べ取り込み提案
-- `/tech-watch` — 憲章に沿う新技術を調べ提案
-- `/charter-review` — 憲章の四半期見直し
-- `/run-eval` — 統合/実LLMスモークを回す
-- `/add-skill` — 新しい DAK スキル(SKILL.md + tools.py)を雛形から作る
+- 新技術ウォッチ・依存の新機能・憲章見直しは GitHub Actions が定期実行する（`tech-watch` / `feature-sync` / `charter-review`）。今すぐ回すときは `gh workflow run <name>.yml`。依存更新の判定は Dependabot の PR ごとに `dependency-triage` が走る。
+- ロジックは `maintenance/`（CLI `dak-maint`、`maintenance/README.md`）、判断基準は `docs/CHARTER.md`。手元で `dak-maint` の `watch` / `feature-sync` / `charter-review` を回すには `MAINT_LLM_*`（`watch` と `charter-review` は `TAVILY_API_KEY` も）が要る。`triage` は無くても動く。
+- テストは上の「テスト 3 層」。
+- ランタイムの DAK スキル（`agent/skills/`）の作り方は `agent/skills/README.md`。
+
+コーディングエージェント向けの共通スキル・規約・スラッシュコマンドは、このリポジトリに置かない（ユーザーレベルで提供される）。
+このファイルと `AGENTS.md` には DAK 固有のことだけを書く。
 
 ## 規約
 

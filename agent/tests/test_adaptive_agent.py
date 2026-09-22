@@ -7,7 +7,7 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dak_agent.adaptive_agent import AdaptiveAgent
-from dak_agent.mode_manager import ModeManager
+from dak_agent.mode_manager import ModeManager, FIRST_TURN_DONE_KEY
 from google.adk.tools import FunctionTool
 
 class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
@@ -54,11 +54,12 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         )
 
         # Mock generate_config
-        mock_generate_config.return_value = ("New Instruction", [self.mock_tools[0]], [])
+        mock_generate_config.return_value = ("New Instruction", ["tool1"], [])
 
         # Simulate callback (first turn)
         context = MagicMock()
         context.session.events = []
+        context.state = {}
         await agent._wrapped_callback(llm_response=MagicMock(), callback_context=context)
 
         # Verify Switch DID NOT happen (instruction remains same)
@@ -67,8 +68,9 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         # Verify generate_mode_config NOT called
         mock_generate_config.assert_not_called()
 
-        # Verify _is_first_turn is set to False (it happens inside ModeManager.should_switch)
-        self.assertFalse(agent._mode_manager._is_first_turn)
+        # Verify the first turn is recorded in this session's state (it happens
+        # inside ModeManager.should_switch), not on the shared ModeManager instance.
+        self.assertTrue(context.state.get(FIRST_TURN_DONE_KEY))
 
     @patch("dak_agent.mode_manager.ModeManager.generate_mode_config")
     async def test_large_context_does_not_trigger_switch(self, mock_generate_config):
@@ -79,12 +81,11 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
             instruction="Initial instruction",
             tools=self.mock_tools
         )
-        agent._mode_manager._is_first_turn = False
-
         event = MagicMock()
         event.content.parts = [MagicMock(text="a" * 1_000_000)]
         context = MagicMock()
         context.session.events = [event]
+        context.state = {FIRST_TURN_DONE_KEY: True}
 
         await agent._wrapped_callback(llm_response=MagicMock(), callback_context=context)
 
@@ -117,11 +118,8 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
             tools=self.mock_tools
         )
 
-        # Bypass initial turn trigger
-        agent._mode_manager._is_first_turn = False
-
         # Mock generate_config
-        mock_generate_config.return_value = ("New Instruction", [self.mock_tools[0]], [])
+        mock_generate_config.return_value = ("New Instruction", ["tool1"], [])
 
         # Create LLM response with switch_mode tool call
         llm_response = MagicMock()
@@ -133,12 +131,47 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
 
         context = MagicMock()
         context.session.events = []
+        # Bypass initial turn trigger for this session.
+        context.state = {FIRST_TURN_DONE_KEY: True}
+        # google-adk v2 runs the invocation on a copy of the agent; point the
+        # mock's "live copy" back at `agent` itself so the assertions below
+        # can observe the switch (see AdaptiveAgent._live_agent).
+        context._invocation_context.agent = agent
 
         await agent._wrapped_callback(llm_response=llm_response, callback_context=context)
 
         # Verify Switch happened
         self.assertEqual(agent.instruction, "New Instruction")
         mock_generate_config.assert_called_once()
+
+    @patch("dak_agent.mode_manager.ModeManager.generate_mode_config")
+    async def test_first_turn_is_tracked_per_session(self, mock_generate_config):
+        """Regression test: one AdaptiveAgent/ModeManager is shared by every
+        session, so session A's first turn must not consume session B's."""
+        agent = AdaptiveAgent(
+            model="test-model",
+            name="test_agent",
+            instruction="Initial instruction",
+            tools=self.mock_tools
+        )
+        mock_generate_config.return_value = ("New Instruction", ["tool1"], [])
+
+        session_a = MagicMock()
+        session_a.session.events = []
+        session_a.state = {}
+        session_b = MagicMock()
+        session_b.session.events = []
+        session_b.state = {}
+
+        # Session A's first turn.
+        await agent._wrapped_callback(llm_response=MagicMock(), callback_context=session_a)
+        self.assertTrue(session_a.state.get(FIRST_TURN_DONE_KEY))
+
+        # Session B's first turn must still be untouched by session A.
+        self.assertFalse(session_b.state.get(FIRST_TURN_DONE_KEY, False))
+        await agent._wrapped_callback(llm_response=MagicMock(), callback_context=session_b)
+        mock_generate_config.assert_not_called()
+        self.assertTrue(session_b.state.get(FIRST_TURN_DONE_KEY))
 
 if __name__ == '__main__':
     unittest.main()

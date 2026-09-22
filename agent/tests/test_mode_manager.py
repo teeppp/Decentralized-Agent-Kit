@@ -101,11 +101,10 @@ class TestModeManager(unittest.TestCase):
         self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
 
     def test_default_model_resolves_full_context_window(self):
-        """The default model (newer than litellm's map) resolves via the override table."""
+        """The default model (gemini-3.8-flash) resolves its 1M window via litellm's map."""
         manager = ModeManager()
-        self.assertEqual(
-            manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["gemini-3.7-flash"]
-        )
+        self.assertEqual(manager.model_name, "gemini-3.8-flash")
+        self.assertGreaterEqual(manager.max_context_tokens, 1_000_000)
         self.assertNotEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
 
     def test_gemini_3x_resolves_context_window_via_litellm(self):
@@ -115,14 +114,40 @@ class TestModeManager(unittest.TestCase):
 
     def test_requested_focus_is_consumed_once(self):
         """A stale LLM-requested focus must not leak into later automatic switches."""
-        self.mode_manager.request_switch(reason="need tools", new_focus="deploy the app")
-        self.assertEqual(self.mode_manager.consume_requested_focus(), "deploy the app")
-        self.assertIsNone(self.mode_manager.consume_requested_focus())
+        state = {}
+        self.mode_manager.request_switch(state, reason="need tools", new_focus="deploy the app")
+        self.assertEqual(self.mode_manager.consume_requested_focus(state), "deploy the app")
+        self.assertIsNone(self.mode_manager.consume_requested_focus(state))
 
-    def test_reset_session_clears_requested_focus(self):
-        self.mode_manager.request_switch(reason="need tools", new_focus="deploy the app")
-        self.mode_manager.reset_session()
-        self.assertIsNone(self.mode_manager.consume_requested_focus())
+    def test_first_turn_never_switches(self):
+        state = {}
+        self.assertFalse(self.mode_manager.should_switch(state))
+
+    def test_switch_requested_after_first_turn(self):
+        state = {}
+        self.mode_manager.should_switch(state)  # consume the first turn
+        self.mode_manager.request_switch(state, reason="r", new_focus="f")
+        self.assertTrue(self.mode_manager.should_switch(state))
+        # The request is consumed: asking again without a new request must not re-trigger.
+        self.assertFalse(self.mode_manager.should_switch(state))
+
+    def test_session_state_is_per_session(self):
+        """A regression test for the process-wide-instance bug: the same
+        ModeManager is shared by every session, so its first-turn/switch-request
+        flags must live in each session's own `state`, not on `self`."""
+        session_a_state = {}
+        session_b_state = {}
+
+        # Session A consumes its first turn and requests a switch.
+        self.assertFalse(self.mode_manager.should_switch(session_a_state))
+        self.mode_manager.request_switch(session_a_state, reason="r", new_focus="f")
+
+        # Session B's own first turn must still be untouched by session A.
+        self.assertFalse(self.mode_manager.should_switch(session_b_state))
+        self.assertFalse(session_b_state.get("dak_mode_switch_requested", False))
+
+        # Session A's switch request must still be pending, independent of B.
+        self.assertTrue(self.mode_manager.should_switch(session_a_state))
 
 if __name__ == '__main__':
     unittest.main()
