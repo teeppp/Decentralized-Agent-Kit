@@ -8,8 +8,8 @@ dependencies = [
     "httpx>=0.28.1",
     # mcp 2.x は mcp.server.fastmcp を廃し MCPServer へ移行、streamable_http_app() の既定
     # host が DNS rebinding 保護を有効にする。main.py の移行が必要（PR #97 参照）。
-    "mcp>=1.22.0,<2",
-    "uvicorn>=0.52.4",
+    "mcp>=1.30.0,<2",
+    "uvicorn>=0.53.0",
     "starlette>=1.6.0"
 ]
 
