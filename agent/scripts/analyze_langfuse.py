@@ -3,10 +3,22 @@ from langfuse import Langfuse
 import json
 from datetime import datetime
 
-# Set credentials from environment (retrieved from container)
-os.environ["LANGFUSE_PUBLIC_KEY"] = "pk-lf-aa7f4d39-cf42-473d-a1fe-b82556ab1f2f"
-os.environ["LANGFUSE_SECRET_KEY"] = "sk-lf-3d2d94e7-2f70-41a2-b6a1-0fcc1dd1f261"
-os.environ["LANGFUSE_HOST"] = "https://cloud.langfuse.com"
+
+def _require_env(name: str) -> str:
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(f"{name} が未設定です。.env に設定し、環境変数として渡してください")
+    return value
+
+
+# Credentials come only from the environment; never write key values into this file.
+LANGFUSE_PUBLIC_KEY = _require_env("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = _require_env("LANGFUSE_SECRET_KEY")
+LANGFUSE_HOST = (
+    os.environ.get("LANGFUSE_HOST")
+    or os.environ.get("LANGFUSE_BASE_URL")
+    or "https://cloud.langfuse.com"
+)
 
 import requests
 import base64
@@ -15,8 +27,8 @@ def analyze_traces():
     print("Initializing Langfuse API request...")
     
     # LangFuse API uses Basic Auth with public/secret keys
-    auth = (os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])
-    host = os.environ["LANGFUSE_HOST"]
+    auth = (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY)
+    host = LANGFUSE_HOST
     
     # API Endpoint for traces
     url = f"{host}/api/public/traces"
