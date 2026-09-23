@@ -4,12 +4,35 @@ import re
 import subprocess
 import glob
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.routing import Mount
 import uvicorn
 
+# DNS rebinding protection: since mcp 1.23 FastMCP auto-enables it for its
+# default host (127.0.0.1) and then accepts only localhost Host headers, which
+# rejects the agent's `Host: mcp-server:8000` with 421. Keep the protection on
+# and allow the compose service name; MCP_ALLOWED_HOSTS (comma-separated
+# host:port patterns, `*` port wildcard) adds hosts for other deployments.
+DEFAULT_ALLOWED_HOSTS = ["mcp-server:*", "localhost:*", "127.0.0.1:*", "[::1]:*"]
+
+
+def _allowed_hosts() -> list[str]:
+    extra = [h.strip() for h in os.getenv("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    return DEFAULT_ALLOWED_HOSTS + extra
+
+
+def _transport_security() -> TransportSecuritySettings:
+    hosts = _allowed_hosts()
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=hosts,
+        allowed_origins=[f"{scheme}://{h}" for h in hosts for scheme in ("http", "https")],
+    )
+
+
 # Initialize FastMCP server with recommended settings
-mcp = FastMCP("dak-agent-mcp", json_response=True)
+mcp = FastMCP("dak-agent-mcp", json_response=True, transport_security=_transport_security())
 
 # Output bounds: an unbounded tool result (a whole file, a recursive listing)
 # can overflow the calling model's context window in one call. Tools return at
