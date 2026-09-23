@@ -11,11 +11,11 @@
 # run costs on the order of a few cents. Other candidates (prices as of 2026-08):
 #   openai/gpt-5-nano                                      $0.05 / $0.40 (cheapest)
 #   gemini/gemini-3.5-flash-lite                           $0.30 / $2.50
-#   gemini/gemini-3.8-flash                                $0.75 / $3.75 (promo pricing as of 2026-09; agent default)
+#   gemini/gemini-3.8-flash                                $0.75 / $3.75 (promo pricing as of 2026-09)
 #   bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0    $1.00 / $5.00
 # Note the gemini rows cost MORE per token than the default. 3.5-flash-lite is
 # listed for its free tier (zero-cost smoke runs); 3.8-flash is listed for
-# vetting the agent's default model. Its free tier has a small daily request
+# vetting the agent's built-in default (config.py). Its free tier has a small daily request
 # quota (~20 RPD reported 2026-09) that a full smoke run across three agents
 # will exhaust, so use a billed key for it.
 #

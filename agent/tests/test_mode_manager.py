@@ -1,6 +1,7 @@
 import os
 import unittest
 from unittest.mock import MagicMock, patch
+from dak_agent.config import DEFAULT_MODEL_NAME
 from dak_agent.mode_manager import ModeManager
 
 class TestModeManager(unittest.TestCase):
@@ -13,7 +14,7 @@ class TestModeManager(unittest.TestCase):
         os.environ.pop("MODEL_CONTEXT_WINDOW", None)
         self.addCleanup(env_patch.stop)
 
-        self.mode_manager = ModeManager()
+        self.mode_manager = ModeManager(model_name=DEFAULT_MODEL_NAME)
 
         # Create mock tools
         self.tool_switch = MagicMock()
@@ -101,9 +102,12 @@ class TestModeManager(unittest.TestCase):
         self.assertEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
 
     def test_default_model_resolves_full_context_window(self):
-        """The default model (gemini-3.8-flash) resolves its 1M window via litellm's map."""
-        manager = ModeManager()
-        self.assertEqual(manager.model_name, "gemini-3.8-flash")
+        """DEFAULT_MODEL_NAME resolves its full window via litellm's map.
+
+        If a default bump lands on a model the pinned litellm doesn't map yet,
+        this fails: add a MODEL_MAX_TOKENS override until litellm catches up.
+        """
+        manager = ModeManager(model_name=DEFAULT_MODEL_NAME)
         self.assertGreaterEqual(manager.max_context_tokens, 1_000_000)
         self.assertNotEqual(manager.max_context_tokens, ModeManager.MODEL_MAX_TOKENS["default"])
 
