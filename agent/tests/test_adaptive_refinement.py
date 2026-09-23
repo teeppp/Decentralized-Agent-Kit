@@ -31,6 +31,7 @@ class TestAdaptiveAgentRefinement:
         mock_context.session = MagicMock()
         events = [MagicMock(), MagicMock()]
         mock_context.session.events = events
+        mock_context.state = {}
 
         with patch.object(self.agent, '_extract_history_summary', return_value="Summary"):
             await self.agent._perform_mode_switch(mock_context)
@@ -52,6 +53,7 @@ class TestAdaptiveAgentRefinement:
         
         mock_context = MagicMock(spec=CallbackContext)
         mock_context.session.contents = []
+        mock_context.state = {}
         
         with patch.object(self.agent, '_extract_history_summary', return_value="Summary"), \
              patch('dak_agent.mode_manager.ModeManager.generate_mode_config', return_value=("New", ["other_tool"], [])):

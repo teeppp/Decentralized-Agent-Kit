@@ -12,7 +12,7 @@
 | 2 | 脆弱性更新の自動判定・自動更新 | Dependabot → `dependency-triage` が **semver×CI×リスク** で判定し安全なものだけ auto-merge |
 | 3 | 機能更新の迅速な取り込み | `feature-sync` が release notes の**新機能**を要約し取り込み Issue 化 |
 | 4 | 新技術の目的ベース提案・目的の定期見直し | `docs/CHARTER.md`（憲章）+ `tech-watch`（隔週）+ `charter-review`（四半期） |
-| 5 | Claude 自身がより高度に扱える | `CLAUDE.md`・`.claude/commands`・権限 allowlist・保守ロジックの **DAK スキル化** |
+| 5 | Claude 自身がより高度に扱える | `CLAUDE.md`（DAK 固有のことだけ）・権限 allowlist・保守ロジックの **DAK スキル化**（共通スキル・コマンドはリポジトリに置かない） |
 | 6 | 使うほど自動化が進む継続テスト | `nightly-eval`（小型 Ollama）+ **golden capture/replay**（決定論回帰が自動増殖） |
 
 ## 2. 設計の核: 階層型（Tiered）判断エンジン

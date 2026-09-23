@@ -1,11 +1,21 @@
 import logging
 import os
-from typing import List, Tuple, Any, Optional
+from typing import Any, List, MutableMapping, Tuple, Optional
 
 from . import meta_llm
 from .config import get_litellm_model_name
 
 logger = logging.getLogger(__name__)
+
+# Session-state keys (ADK persists `callback_context.state` per session, even
+# across process restarts when a database SessionService is used). One
+# `ModeManager` is shared by every session in the process, so the mode-switch
+# flags themselves must live in session state, not on `self` — otherwise
+# session A's first turn / switch_mode request bleeds into session B. Mirrors
+# the pattern in `enforcer.py`'s `PLAN_KEY`.
+FIRST_TURN_DONE_KEY = "dak_mode_first_turn_done"
+SWITCH_REQUESTED_KEY = "dak_mode_switch_requested"
+REQUESTED_FOCUS_KEY = "dak_mode_requested_focus"
 
 
 class ModeManager:
@@ -14,11 +24,15 @@ class ModeManager:
     A Mode consists of:
     1. A specific System Instruction (Prompt).
     2. A specific set of Allowed Tools.
-    
+
     Trigger: the LLM calls the `switch_mode` tool (never on the first turn).
 
     Context-window pressure is NOT handled here: the context harness
     (harness.py + ADK events compaction) owns that.
+
+    One instance is shared by every session in the process; per-session
+    mode-switch flags are passed in explicitly as a `state` mapping
+    (`callback_context.state`) rather than stored on `self`.
     """
 
     # Context-window sizes normally come from litellm's model map (see
@@ -35,9 +49,6 @@ class ModeManager:
     def __init__(self, model_name: str):
         self.model_name = model_name
         self.max_context_tokens = self.resolve_context_window(model_name)
-        self._is_first_turn = True
-        self._switch_requested = False
-        self._requested_focus: Optional[str] = None
 
     @classmethod
     def resolve_context_window(cls, model_name: str) -> int:
@@ -83,42 +94,39 @@ class ModeManager:
             )
         return cls.MODEL_MAX_TOKENS["default"]
 
-    def should_switch(self) -> bool:
+    def should_switch(self, state: MutableMapping[str, Any]) -> bool:
         """Decide whether to switch modes after a model response.
 
         Only an explicit `switch_mode` call triggers a switch; the first turn
-        always keeps the default minimal toolset.
+        of a session always keeps the default minimal toolset.
+
+        Args:
+            state: The current session's state (`callback_context.state`).
         """
-        if self._is_first_turn:
+        if not state.get(FIRST_TURN_DONE_KEY, False):
             logger.info("First turn: Using default minimal toolset (no mode switch).")
-            self._is_first_turn = False
+            state[FIRST_TURN_DONE_KEY] = True
             return False
 
-        if self._switch_requested:
+        if state.get(SWITCH_REQUESTED_KEY, False):
             logger.info("Mode Switch Triggered: LLM requested via switch_mode tool")
-            self._switch_requested = False
+            state[SWITCH_REQUESTED_KEY] = False
             return True
 
         return False
 
-    def request_switch(self, reason: str, new_focus: str):
+    def request_switch(self, state: MutableMapping[str, Any], reason: str, new_focus: str):
         """Called when LLM uses the switch_mode tool."""
         logger.info(f"Switch requested by LLM. Reason: {reason}, New focus: {new_focus}")
-        self._switch_requested = True
-        self._requested_focus = new_focus
-    
-    def consume_requested_focus(self) -> Optional[str]:
+        state[SWITCH_REQUESTED_KEY] = True
+        state[REQUESTED_FOCUS_KEY] = new_focus
+
+    def consume_requested_focus(self, state: MutableMapping[str, Any]) -> Optional[str]:
         """Return the LLM-requested focus (if any) and clear it, so a later
         threshold-triggered switch doesn't inherit a stale objective."""
-        focus = self._requested_focus
-        self._requested_focus = None
+        focus = state.get(REQUESTED_FOCUS_KEY)
+        state[REQUESTED_FOCUS_KEY] = None
         return focus
-
-    def reset_session(self):
-        """Reset for a new session."""
-        self._is_first_turn = True
-        self._switch_requested = False
-        self._requested_focus = None
 
     def generate_mode_config(
         self,
