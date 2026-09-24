@@ -173,5 +173,20 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         mock_generate_config.assert_not_called()
         self.assertTrue(session_b.state.get(FIRST_TURN_DONE_KEY))
 
+    def test_call_instruction_overrides_mode_and_base_instruction(self):
+        agent = AdaptiveAgent(
+            model="test-model",
+            name="test_agent",
+            instruction="Initial instruction",
+            tools=self.mock_tools
+        )
+        state = {"dak_mode_instruction": "Mode instruction", "dak_active_skills": []}
+
+        self.assertEqual(agent._resolve_session_instruction(state, {}), "Mode instruction")
+        self.assertEqual(
+            agent._resolve_session_instruction(state, {"dak:instruction": "Answer in one word."}),
+            "Answer in one word.",
+        )
+
 if __name__ == '__main__':
     unittest.main()
