@@ -21,6 +21,7 @@ services:
       - MODEL_NAME=openai/fake-default
       - OPENAI_API_BASE=http://fake-llm:8080/v1
       - OPENAI_API_KEY=dummy
+      - DAK_ALLOWED_MODELS=openai/fake-default,openai/fake-alt
     depends_on:
       - postgres
       - fake-llm
