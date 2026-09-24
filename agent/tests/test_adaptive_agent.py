@@ -253,5 +253,20 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(error["requested_model"], "openai/not-allowed")
         self.assertEqual(error["allowed_models"], ["openai/allowed-model"])
 
+    async def test_call_model_rejected_even_when_session_config_fails(self):
+        """A broken piece of session state must not turn the refusal into a
+        silent fall-through to the default model (fail closed)."""
+        import json
+
+        agent = AdaptiveAgent(model="openai/default-model", name="test_agent",
+                              instruction="Initial instruction", tools=self.mock_tools)
+        context = self._session_context(agent, {"dak:model": "openai/not-allowed", "dak_active_skills": None})
+
+        with patch.dict(os.environ, {"DAK_ALLOWED_MODELS": "openai/allowed-model"}):
+            content = await agent._restore_session_config(context)
+
+        self.assertIsNotNone(content)
+        self.assertEqual(json.loads(content.parts[0].text)["error"], "model_not_allowed")
+
 if __name__ == '__main__':
     unittest.main()

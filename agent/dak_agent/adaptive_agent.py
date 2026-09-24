@@ -331,7 +331,10 @@ class AdaptiveAgent(LlmAgent):
             error = self._apply_session_config(callback_context)
         except Exception as e:
             logger.error(f"CRITICAL ERROR restoring session config: {e}", exc_info=True)
-            return None
+            # Still refuse a model the operator does not allow (fail closed).
+            _, error = call_config.resolve_model_selection(
+                call_config.resolve_dak_settings(callback_context), self._base_model_name
+            )
         if error:
             logger.info(f"Refusing call: {error}")
             return types.Content(role="model", parts=[types.Part(text=json.dumps(error))])
