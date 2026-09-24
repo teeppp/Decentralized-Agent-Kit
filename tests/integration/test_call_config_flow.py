@@ -7,6 +7,7 @@ import httpx
 from conftest import AGENT_RUN_TIMEOUT, AGENT_URL, APP_NAME, FAKE_LLM_URL, event_texts
 
 MODEL = "fake-default"
+ALT_MODEL = "fake-alt"  # allowed by DAK_ALLOWED_MODELS in docker-compose.test.yml
 DATE_SCHEMA = {"type": "object", "required": ["date"], "properties": {"date": {"type": "string"}}}
 
 
@@ -60,3 +61,34 @@ def test_reply_matching_output_schema_is_returned_as_json(agent, fake_llm):
 
     texts = event_texts(events)
     assert json.loads(texts[-1]) == {"date": "2026-09-22"}, f"events: {events}"
+
+
+def _llm_requests(model: str) -> int:
+    return len(httpx.get(f"{FAKE_LLM_URL}/requests/{model}", timeout=10.0).json())
+
+
+def test_call_model_routes_to_requested_model_only(agent, fake_llm):
+    fake_llm.clear(MODEL)
+    fake_llm.clear(ALT_MODEL)
+    fake_llm.script(ALT_MODEL, [fake_llm.text("from alt model")])
+
+    events = _run(agent, agent.create_session(), "hi", {"dak:model": f"openai/{ALT_MODEL}"})
+
+    assert any("from alt model" in t for t in event_texts(events)), f"events: {events}"
+    assert _llm_requests(ALT_MODEL) == 1
+    assert _llm_requests(MODEL) == 0
+
+
+def test_call_model_rejected_when_not_in_allow_list(agent, fake_llm):
+    fake_llm.clear(MODEL)
+    fake_llm.clear(ALT_MODEL)
+    before = {m: _llm_requests(m) for m in (MODEL, ALT_MODEL, "not-allowed")}
+
+    events = _run(agent, agent.create_session(), "hi", {"dak:model": "openai/not-allowed"})
+
+    errors = [json.loads(t) for t in event_texts(events) if "model_not_allowed" in t]
+    assert errors, f"events: {events}"
+    assert errors[-1]["requested_model"] == "openai/not-allowed"
+    assert errors[-1]["allowed_models"] == ["openai/fake-alt", "openai/fake-default"]
+    # No LLM was called at all.
+    assert {m: _llm_requests(m) for m in before} == before
