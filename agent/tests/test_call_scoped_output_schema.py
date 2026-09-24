@@ -135,3 +135,18 @@ async def test_reply_without_output_schema_is_not_validated():
     session = await sessions.create_session(app_name="dak_agent", user_id="u")
 
     assert (await _run(app, sessions, session.id))[-1] == "plain text, not JSON"
+
+
+@pytest.mark.asyncio
+async def test_empty_output_schema_still_requires_json():
+    """`{}` accepts any JSON value, but a non-JSON reply must still fail."""
+    from google.adk.sessions import InMemorySessionService
+
+    llm, _ = _recording_llm(reply="plain text, not JSON")
+    app = _app(llm)
+    sessions = InMemorySessionService()
+    session = await sessions.create_session(app_name="dak_agent", user_id="u")
+
+    texts = await _run(app, sessions, session.id, state_delta={"dak:output_schema": {}})
+
+    assert json.loads(texts[-1])["error"] == "output_schema_validation_failed"

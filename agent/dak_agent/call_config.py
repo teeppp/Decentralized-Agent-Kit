@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
+from jsonschema_specifications import REGISTRY as METASCHEMAS
 
 DAK_PREFIX = "dak:"
 STATE_CALL_INSTRUCTION = "dak:instruction"
@@ -66,7 +67,14 @@ def validate_call_output(schema: Dict[str, Any], text: str) -> Tuple[Optional[An
         parsed = json.loads(text)
     except ValueError as exc:
         return None, [{"path": "", "message": f"invalid JSON: {exc}"}]
-    errors = sorted(Draft202012Validator(schema).iter_errors(parsed), key=lambda e: [str(p) for p in e.absolute_path])
+    # The schema comes from the caller. jsonschema's default registry fetches
+    # remote `$ref` URLs; this one only knows the bundled metaschemas, so a
+    # remote ref is unresolvable instead of a request from this container.
+    validator = Draft202012Validator(schema, registry=METASCHEMAS)
+    try:
+        errors = sorted(validator.iter_errors(parsed), key=lambda e: [str(p) for p in e.absolute_path])
+    except Exception as exc:  # unresolvable $ref and the like
+        return None, [{"path": "", "message": f"invalid output_schema: {exc}"}]
     if errors:
         return None, [{"path": _issue_path(e), "message": e.message} for e in errors]
     return parsed, []

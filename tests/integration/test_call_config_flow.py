@@ -35,8 +35,9 @@ def test_call_instruction_is_the_system_prompt_the_llm_receives(agent, fake_llm)
     assert system["role"] == "system"
     content = system["content"] if isinstance(system["content"], str) else "".join(
         c.get("text", "") for c in system["content"])
-    assert content.startswith("Answer in one word.")
-    assert "helpful assistant" not in content  # the default AGENT_INSTRUCTION is replaced
+    # The whole system prompt: the caller's instruction plus the identity line
+    # ADK appends to every agent's instruction.
+    assert content == 'Answer in one word.\n\nYou are an agent. Your internal name is "dak_agent".'
 
 
 def test_reply_not_matching_output_schema_returns_structured_failure(agent, fake_llm):

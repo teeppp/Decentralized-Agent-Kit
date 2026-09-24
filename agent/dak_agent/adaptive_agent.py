@@ -374,7 +374,7 @@ class AdaptiveAgent(LlmAgent):
         (no schema, not a final text reply, or the reply is valid)."""
         schema = call_config.resolve_dak_settings(callback_context).get(call_config.STATE_CALL_OUTPUT_SCHEMA)
         content = llm_response.content
-        if not schema or llm_response.partial or not content or not content.parts:
+        if schema is None or llm_response.partial or not content or not content.parts:
             return None
         if any(getattr(part, "function_call", None) for part in content.parts):
             return None

@@ -82,3 +82,31 @@ def test_validate_call_output_reports_invalid_schema():
 
     assert parsed is None
     assert issues[0]["message"].startswith("invalid output_schema:")
+
+
+def test_validate_call_output_resolves_local_refs():
+    schema = {"$defs": {"d": {"type": "string"}}, "type": "object",
+              "properties": {"date": {"$ref": "#/$defs/d"}}}
+
+    assert call_config.validate_call_output(schema, '{"date": "x"}') == ({"date": "x"}, [])
+    assert call_config.validate_call_output(schema, '{"date": 1}')[1][0]["path"] == "date"
+
+
+def test_validate_call_output_reports_unresolvable_ref():
+    parsed, issues = call_config.validate_call_output({"$ref": "#/$defs/missing"}, "{}")
+
+    assert parsed is None
+    assert issues[0]["message"].startswith("invalid output_schema:")
+
+
+def test_validate_call_output_never_fetches_remote_refs():
+    """A caller-supplied schema must not make the agent fetch URLs (SSRF)."""
+    from unittest.mock import patch
+
+    with patch("urllib.request.urlopen", side_effect=AssertionError("fetched a remote $ref")) as urlopen:
+        parsed, issues = call_config.validate_call_output(
+            {"$ref": "http://169.254.169.254/latest/meta-data/"}, "{}")
+
+    urlopen.assert_not_called()
+    assert parsed is None
+    assert issues[0]["message"].startswith("invalid output_schema:")
