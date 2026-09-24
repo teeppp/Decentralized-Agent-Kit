@@ -55,7 +55,7 @@
 ```
 
 - モデルの別名（短い名前の辞書）は無い。`MODEL_NAME` と同じ形のモデル ID をそのまま書く
-- 1 回のリクエストの上限（コンテキストハーネスの `request_token_budget`）は、選んだモデルのコンテキスト窓（LiteLLM のモデル表）から計算し直す。`MODEL_CONTEXT_WINDOW` は起動時の `MODEL_NAME` の窓なので、ほかのモデルには使わない
+- 1 回のリクエストの上限（コンテキストハーネスの `request_token_budget`）は、選んだモデルのコンテキスト窓（LiteLLM のモデル表）から計算し直す。`MODEL_CONTEXT_WINDOW` は起動時の `MODEL_NAME` の窓なので、ほかのモデルには使わない。LiteLLM のモデル表に無いモデル（llama-server の別名など）は窓が分からないので、起動時のモデルの窓（`MODEL_CONTEXT_WINDOW` があればその値）を使う。窓の小さいローカルモデルを許可一覧に入れるときは、既定モデルもそれ以下の窓にしておく
 - 履歴の圧縮（ADK の compaction）が始まるトークン数は、起動時の `MODEL_NAME` の窓で決まったまま変わらない（App を作るときに 1 度だけ決まるため）
 
 ## 効く範囲と優先順位

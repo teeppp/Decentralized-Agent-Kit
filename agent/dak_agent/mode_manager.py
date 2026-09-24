@@ -74,6 +74,19 @@ class ModeManager:
 
     @classmethod
     def _lookup_max_tokens(cls, model_name: str) -> int:
+        known = cls.known_context_window(model_name)
+        if known is None:
+            logger.info(
+                f"Model '{model_name}' not in litellm's model map; "
+                f"assuming {cls.MODEL_MAX_TOKENS['default']} context tokens."
+            )
+            return cls.MODEL_MAX_TOKENS["default"]
+        return known
+
+    @classmethod
+    def known_context_window(cls, model_name: str) -> Optional[int]:
+        """The model's context window from the override table or litellm's
+        model map, or None when neither knows the model."""
         # The model name may carry a LiteLLM provider prefix
         # (e.g. "gemini/gemini-2.5-flash"); the override table is keyed bare,
         # while litellm resolves prefixed IDs as-is (Bedrock inference
@@ -88,11 +101,8 @@ class ModeManager:
             if max_input:  # some entries carry None
                 return max_input
         except Exception:
-            logger.info(
-                f"Model '{model_name}' not in litellm's model map; "
-                f"assuming {cls.MODEL_MAX_TOKENS['default']} context tokens."
-            )
-        return cls.MODEL_MAX_TOKENS["default"]
+            pass
+        return None
 
     def should_switch(self, state: MutableMapping[str, Any]) -> bool:
         """Decide whether to switch modes after a model response.

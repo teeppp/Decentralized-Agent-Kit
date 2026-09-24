@@ -696,7 +696,11 @@ class ContextHarnessPlugin(BasePlugin):
         if settings is None:
             # Not `from_env`: MODEL_CONTEXT_WINDOW states the startup model's
             # window (e.g. a llama-server alias) and must not cap other models.
-            settings = replace(self.settings, context_window=ModeManager._lookup_max_tokens(model_name))
+            # A model litellm does not know (another local alias) has no known
+            # window; keep the startup one rather than assume 128K and overflow
+            # a small server.
+            window = ModeManager.known_context_window(model_name) or self.settings.context_window
+            settings = replace(self.settings, context_window=window)
             self._settings_cache[model_name] = settings
         return settings
 

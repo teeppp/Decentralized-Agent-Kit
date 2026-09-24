@@ -480,6 +480,18 @@ class TestPerCallHarnessSettings:
         settings = self._settings_for(self._plugin(), {"dak:model": self.OTHER})
         assert settings.context_window == 1_048_576
 
+    def test_unknown_model_does_not_get_a_larger_window_than_the_startup_model(self):
+        """A model id absent from litellm's map (e.g. another llama-server
+        alias) has no known window; assuming 128K would let requests overflow
+        a small local server, so it keeps the startup model's window."""
+        settings = self._settings_for(self._plugin(), {"dak:model": "openai/another-local-alias"})
+        assert settings.context_window == 8192
+
+    def test_budget_ratio_is_kept_for_other_models(self):
+        plugin = harness.ContextHarnessPlugin(
+            HarnessSettings(context_window=8192, request_budget_ratio=0.5), self.DEFAULT)
+        assert self._settings_for(plugin, {"dak:model": self.OTHER}).request_token_budget == 1_048_576 // 2
+
     @pytest.mark.asyncio
     async def test_before_model_callback_uses_the_call_models_budget(self):
         plugin = self._plugin()
