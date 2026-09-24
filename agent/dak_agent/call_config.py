@@ -55,6 +55,11 @@ def _issue_path(error) -> str:
     return "/".join(path)
 
 
+def _reject_constant(name: str):
+    """Python's json accepts NaN/Infinity; standard JSON does not."""
+    raise ValueError(f"{name} is not valid JSON")
+
+
 def validate_call_output(schema: Dict[str, Any], text: str) -> Tuple[Optional[Any], List[Dict[str, str]]]:
     """Check a final model reply against the call's `dak:output_schema`.
     Returns `(parsed_json, [])` on success, `(None, issues)` otherwise, each
@@ -64,8 +69,8 @@ def validate_call_output(schema: Dict[str, Any], text: str) -> Tuple[Optional[An
     except SchemaError as exc:
         return None, [{"path": "", "message": f"invalid output_schema: {exc.message}"}]
     try:
-        parsed = json.loads(text)
-    except ValueError as exc:
+        parsed = json.loads(text, parse_constant=_reject_constant)
+    except (ValueError, RecursionError) as exc:  # RecursionError: absurdly deep nesting
         return None, [{"path": "", "message": f"invalid JSON: {exc}"}]
     # The schema comes from the caller. jsonschema's default registry fetches
     # remote `$ref` URLs; this one only knows the bundled metaschemas, so a

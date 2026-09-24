@@ -150,3 +150,38 @@ async def test_empty_output_schema_still_requires_json():
     texts = await _run(app, sessions, session.id, state_delta={"dak:output_schema": {}})
 
     assert json.loads(texts[-1])["error"] == "output_schema_validation_failed"
+
+
+class TestReplyEligibility:
+    """Only a complete, final text reply is validated (`_check_call_output`)."""
+
+    def _check(self, response, schema=SCHEMA):
+        from dak_agent.adaptive_agent import AdaptiveAgent
+
+        agent = AdaptiveAgent(model="test-model", name="dak_agent", instruction="x", tools=[])
+        with patch("dak_agent.call_config.resolve_dak_settings", return_value={"dak:output_schema": schema}):
+            return agent._check_call_output(response, MagicMock())
+
+    @staticmethod
+    def _response(*parts, partial=None):
+        from google.adk.models.llm_response import LlmResponse
+
+        return LlmResponse(content=types.Content(role="model", parts=list(parts)), partial=partial)
+
+    def test_tool_call_turn_is_not_validated(self):
+        call = types.Part(function_call=types.FunctionCall(name="t", args={}))
+        assert self._check(self._response(types.Part(text="let me look"), call)) is None
+
+    def test_partial_stream_chunk_is_not_validated(self):
+        assert self._check(self._response(types.Part(text='{"da'), partial=True)) is None
+
+    def test_thought_text_is_left_out(self):
+        reply = self._response(types.Part(text="thinking...", thought=True),
+                               types.Part(text='{"date": "2026-09-22"}'))
+        assert self._check(reply) is None
+
+    def test_validation_error_fails_closed(self):
+        """An unexpected error while validating must not let the reply through."""
+        with patch("dak_agent.call_config.validate_call_output", side_effect=RuntimeError("boom")):
+            failure = self._check(self._response(types.Part(text='{"date": "x"}')))
+        assert json.loads(failure.content.parts[0].text)["error"] == "output_schema_validation_failed"

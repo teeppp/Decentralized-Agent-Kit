@@ -110,3 +110,17 @@ def test_validate_call_output_never_fetches_remote_refs():
     urlopen.assert_not_called()
     assert parsed is None
     assert issues[0]["message"].startswith("invalid output_schema:")
+
+
+def test_validate_call_output_rejects_non_standard_json_constants():
+    for text in ("NaN", "Infinity", "-Infinity", '{"x": NaN}'):
+        parsed, issues = call_config.validate_call_output({}, text)
+        assert parsed is None, text
+        assert issues[0]["message"].startswith("invalid JSON:"), text
+
+
+def test_validate_call_output_reports_too_deeply_nested_json():
+    parsed, issues = call_config.validate_call_output({}, "[" * 100_000)
+
+    assert parsed is None
+    assert issues[0]["message"].startswith("invalid JSON:")

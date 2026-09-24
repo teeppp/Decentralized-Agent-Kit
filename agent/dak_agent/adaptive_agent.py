@@ -379,7 +379,11 @@ class AdaptiveAgent(LlmAgent):
         if any(getattr(part, "function_call", None) for part in content.parts):
             return None
         text = "".join(part.text for part in content.parts if part.text and not part.thought)
-        _, issues = call_config.validate_call_output(schema, text)
+        try:
+            _, issues = call_config.validate_call_output(schema, text)
+        except Exception as e:  # fail closed: never let an unchecked reply through
+            logger.error(f"dak:output_schema validation crashed: {e}", exc_info=True)
+            issues = [{"path": "", "message": f"validation error: {e}"}]
         if not issues:
             return None
         logger.info(f"Reply failed dak:output_schema: {issues}")
