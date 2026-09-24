@@ -9,7 +9,7 @@ from google.adk.models.llm_response import LlmResponse
 from pydantic import ConfigDict, Field, PrivateAttr
 import inspect
 
-from . import remote_tools, skill_tools
+from . import call_config, remote_tools, skill_tools
 from .config import load_agent_config
 from .errors import PaymentRequiredError
 from .handlers.payment_handler import PaymentHandler
@@ -168,8 +168,15 @@ class AdaptiveAgent(LlmAgent):
     # recomputes the effective instruction/tools from that state and applies
     # them onto the live per-invocation copy.
 
-    def _resolve_session_instruction(self, state: MutableMapping[str, Any]) -> str:
-        """Rebuild this session's system instruction from its state."""
+    def _resolve_session_instruction(
+        self, state: MutableMapping[str, Any], call_settings: Dict[str, Any]
+    ) -> str:
+        """Rebuild this session's system instruction from its state. A
+        per-call `dak:instruction` replaces it entirely."""
+        call_instruction = call_settings.get(call_config.STATE_CALL_INSTRUCTION)
+        if call_instruction:
+            return call_instruction
+
         mode_instruction = state.get(skill_tools.STATE_MODE_INSTRUCTION)
         instruction = mode_instruction if mode_instruction else self._base_instruction
 
@@ -270,7 +277,15 @@ class AdaptiveAgent(LlmAgent):
         `context.state` and apply them onto the live per-invocation agent."""
         state = context.state
         live = self._live_agent(context)
-        live.instruction = self._resolve_session_instruction(state)
+        call_settings = call_config.resolve_dak_settings(context)
+        instruction = self._resolve_session_instruction(state, call_settings)
+        if call_settings.get(call_config.STATE_CALL_INSTRUCTION):
+            # A provider (callable) makes ADK skip `{var}` session-state
+            # injection, so the caller's text reaches the model verbatim
+            # (`{date}` in it would otherwise fail the turn with a KeyError).
+            live.instruction = lambda _ctx, text=instruction: text
+        else:
+            live.instruction = instruction
         live.tools = self._resolve_session_tools(state)
         live._active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
         skill_tools.invalidate_canonical_tools_cache(context)
