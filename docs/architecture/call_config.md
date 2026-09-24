@@ -37,9 +37,24 @@
 |---|---|---|
 | `dak:instruction` | 文字列。そのセッションのシステムプロンプトになる（既定の指示・モード指示・スキルの追記を置き換える） | `AGENT_INSTRUCTION`（とモード・スキル）のまま |
 | `dak:output_schema` | JSON Schema（dict、Draft 2020-12）。LLM のリクエストに構造化出力の指定（`response_schema`、`response_mime_type=application/json`）が入り、最終応答はこのスキーマで検証される | 指定なし。今までどおりの自由形式の応答 |
+| `dak:model` | LiteLLM のモデル ID（例: `bedrock/openai.gpt-5.6-luna`、`openai/gpt-5.6-luna`）。その呼び出しの LLM リクエストだけがこのモデルに向かう。運用者が `DAK_ALLOWED_MODELS` で許可したものだけ使える | `MODEL_NAME` のまま |
 
 - `dak:instruction` の文字列はそのまま LLM に届く。ADK の `{名前}` 差し込み（セッション state の値で置き換える機能）は通さないので、`{date}` のような文字を含めてよい
 - ADK は指示の後ろに、自分の識別行（`You are an agent. Your internal name is "dak_agent".`）を足す。これは既定の指示でも同じ
+
+## モデルの許可一覧（運用者）
+
+`dak:model` で選べるモデルは、運用者が環境変数 `DAK_ALLOWED_MODELS`（カンマ区切りのモデル ID）で決める。
+呼び出し元が任意のモデルを指定して、費用の上限を破れないようにするため。
+
+- **未設定なら、`dak:model` の指定は常に拒否する。** 許可するときだけ、運用者が明示的に設定する
+- 一覧に無いモデル（または文字列でない値）を指定すると、LLM を一切呼ばずに、そのターンは次の応答で終わる
+
+```json
+{"error": "model_not_allowed", "requested_model": "openai/not-allowed", "allowed_models": ["openai/fake-alt", "openai/fake-default"]}
+```
+
+- モデルの別名（短い名前の辞書）は無い。`MODEL_NAME` と同じ形のモデル ID をそのまま書く
 
 ## 効く範囲と優先順位
 

@@ -249,6 +249,10 @@ MODEL_NAME=<litellm-model>   # optional. Any LiteLLM name: a Gemini model,
                              # Unset = the built-in default; .env.example shows
                              # its current value (defined once, in
                              # agent/dak_agent/config.py DEFAULT_MODEL_NAME).
+DAK_ALLOWED_MODELS=openai/gpt-5.6-luna,ollama/qwen3  # optional. Models a caller
+                             # may pick per call with `dak:model`
+                             # (docs/architecture/call_config.md). Unset = no
+                             # caller may pick a model.
 
 # Enforcer Mode
 ENABLE_ENFORCER_MODE=true    # Enable strict ReAct pattern (Ulysses Pact)
