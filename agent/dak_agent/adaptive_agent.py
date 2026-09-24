@@ -286,6 +286,10 @@ class AdaptiveAgent(LlmAgent):
             live.instruction = lambda _ctx, text=instruction: text
         else:
             live.instruction = instruction
+        # None (unspecified) keeps free-form text/tool-call responses. ADK puts
+        # it on the request as `response_schema` (LiteLlm supports it
+        # alongside tools).
+        live.output_schema = call_settings.get(call_config.STATE_CALL_OUTPUT_SCHEMA)
         live.tools = self._resolve_session_tools(state)
         live._active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
         skill_tools.invalidate_canonical_tools_cache(context)
