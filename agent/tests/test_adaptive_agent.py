@@ -188,5 +188,85 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
             "Answer in one word.",
         )
 
+    def _session_context(self, agent, state):
+        context = MagicMock()
+        context.state = state
+        context._invocation_context.agent = MagicMock()
+        return context
+
+    def test_call_model_switches_live_model_when_allowed(self):
+        agent = AdaptiveAgent(model="openai/default-model", name="test_agent",
+                              instruction="Initial instruction", tools=self.mock_tools)
+        context = self._session_context(agent, {"dak:model": "openai/allowed-model"})
+
+        with patch.dict(os.environ, {"DAK_ALLOWED_MODELS": "openai/allowed-model"}):
+            error = agent._apply_session_config(context)
+
+        self.assertIsNone(error)
+        live = context._invocation_context.agent
+        self.assertEqual(live.model.model, "openai/allowed-model")
+        # The LiteLlm is cached and shared across sessions, not rebuilt per call.
+        other = self._session_context(agent, {"dak:model": "openai/allowed-model"})
+        with patch.dict(os.environ, {"DAK_ALLOWED_MODELS": "openai/allowed-model"}):
+            agent._apply_session_config(other)
+        self.assertIs(other._invocation_context.agent.model, live.model)
+        self.assertEqual(agent.model, "openai/default-model")  # the shared root is untouched
+
+    async def test_call_model_rejected_returns_error_without_calling_llm(self):
+        import json
+
+        from google.adk.apps import App
+        from google.adk.artifacts import InMemoryArtifactService
+        from google.adk.models.base_llm import BaseLlm
+        from google.adk.runners import Runner
+        from google.adk.sessions import InMemorySessionService
+        from google.genai import types
+
+        calls = []
+
+        class MustNotBeCalled(BaseLlm):
+            async def generate_content_async(self, llm_request, stream=False):
+                calls.append(llm_request)
+                raise AssertionError("the LLM must not be called for a refused model")
+                yield  # pragma: no cover
+
+        agent = AdaptiveAgent(model=MustNotBeCalled(model="default-model"), name="dak_agent",
+                              instruction="Initial instruction", tools=[])
+        sessions = InMemorySessionService()
+        session = await sessions.create_session(app_name="dak_agent", user_id="u")
+        runner = Runner(app=App(name="dak_agent", root_agent=agent), session_service=sessions,
+                        artifact_service=InMemoryArtifactService())
+
+        texts = []
+        with patch.dict(os.environ, {"DAK_ALLOWED_MODELS": "openai/allowed-model"}), \
+                patch("dak_agent.remote_tools.discover_remote_tools", return_value={}):
+            async for event in runner.run_async(
+                user_id="u", session_id=session.id,
+                new_message=types.Content(role="user", parts=[types.Part(text="hi")]),
+                state_delta={"dak:model": "openai/not-allowed"},
+            ):
+                texts += [p.text for p in (event.content.parts if event.content else []) if p.text]
+
+        self.assertEqual(calls, [])
+        error = json.loads(texts[-1])
+        self.assertEqual(error["error"], "model_not_allowed")
+        self.assertEqual(error["requested_model"], "openai/not-allowed")
+        self.assertEqual(error["allowed_models"], ["openai/allowed-model"])
+
+    async def test_call_model_rejected_even_when_session_config_fails(self):
+        """A broken piece of session state must not turn the refusal into a
+        silent fall-through to the default model (fail closed)."""
+        import json
+
+        agent = AdaptiveAgent(model="openai/default-model", name="test_agent",
+                              instruction="Initial instruction", tools=self.mock_tools)
+        context = self._session_context(agent, {"dak:model": "openai/not-allowed", "dak_active_skills": None})
+
+        with patch.dict(os.environ, {"DAK_ALLOWED_MODELS": "openai/allowed-model"}):
+            content = await agent._restore_session_config(context)
+
+        self.assertIsNotNone(content)
+        self.assertEqual(json.loads(content.parts[0].text)["error"], "model_not_allowed")
+
 if __name__ == '__main__':
     unittest.main()

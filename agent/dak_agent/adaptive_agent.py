@@ -6,13 +6,14 @@ from typing import Any, Dict, List, MutableMapping, Optional, Tuple
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
+from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 from pydantic import ConfigDict, Field, PrivateAttr
 import inspect
 
 from . import call_config, remote_tools, skill_tools
-from .config import load_agent_config
+from .config import get_litellm_model_name, load_agent_config
 from .errors import PaymentRequiredError
 from .handlers.payment_handler import PaymentHandler
 from .mode_manager import ModeManager
@@ -46,6 +47,8 @@ class AdaptiveAgent(LlmAgent):
     _active_skills: List[str] = PrivateAttr(default_factory=list)
     _payment_handler: Optional[PaymentHandler] = PrivateAttr(default=None)
     _enable_ap2: bool = PrivateAttr(default=False)
+    _base_model_name: str = PrivateAttr(default="")
+    _llm_model_cache: Dict[str, Any] = PrivateAttr(default_factory=dict)
 
     def __init__(
         self,
@@ -101,6 +104,7 @@ class AdaptiveAgent(LlmAgent):
         self.available_remote_tools = {}
 
         model_name_str = model if isinstance(model, str) else getattr(model, "model", str(model))
+        self._base_model_name = model_name_str
         self._mode_manager = ModeManager(model_name=model_name_str)
         self._all_available_tools = all_tools
         self._builtin_tools = builtin_tools
@@ -260,6 +264,15 @@ class AdaptiveAgent(LlmAgent):
             self._mcp_toolset_cache[key] = toolset
         return toolset
 
+    def _model_for(self, model_name: str) -> LiteLlm:
+        """One LiteLlm per model id, shared by every session (same reason as
+        `_cached_mcp_toolset`: do not rebuild it on every turn)."""
+        llm = self._llm_model_cache.get(model_name)
+        if llm is None:
+            llm = LiteLlm(model=get_litellm_model_name(model_name))
+            self._llm_model_cache[model_name] = llm
+        return llm
+
     def _live_agent(self, context: CallbackContext) -> "AdaptiveAgent":
         """The per-invocation copy google-adk v2 actually runs. Falls back to
         `self` only when the context carries no invocation agent (unit tests
@@ -274,12 +287,15 @@ class AdaptiveAgent(LlmAgent):
             return self
         return live
 
-    def _apply_session_config(self, context: CallbackContext) -> None:
+    def _apply_session_config(self, context: CallbackContext) -> Optional[Dict[str, Any]]:
         """Recompute this session's instruction/tools/active_skills from
-        `context.state` and apply them onto the live per-invocation agent."""
+        `context.state` and apply them onto the live per-invocation agent.
+        Returns an error dict when the call asked for a model the operator
+        does not allow; the caller must then stop before any model call."""
         state = context.state
         live = self._live_agent(context)
         call_settings = call_config.resolve_dak_settings(context)
+        model_name, model_error = call_config.resolve_model_selection(call_settings, self._base_model_name)
         instruction = self._resolve_session_instruction(state, call_settings)
         if call_settings.get(call_config.STATE_CALL_INSTRUCTION):
             # A provider (callable) makes ADK skip `{var}` session-state
@@ -295,18 +311,33 @@ class AdaptiveAgent(LlmAgent):
         live.tools = self._resolve_session_tools(state)
         live._active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
         skill_tools.invalidate_canonical_tools_cache(context)
+        if model_error:
+            return model_error
+        if call_settings.get(call_config.STATE_CALL_MODEL) is not None:
+            live.model = self._model_for(model_name)
+        return None
 
-    async def _restore_session_config(self, callback_context: CallbackContext) -> None:
+    async def _restore_session_config(self, callback_context: CallbackContext) -> Optional[types.Content]:
         """`before_agent_callback`: runs once at the start of every invocation,
         before any model call. Without this, a session resumed on a fresh
         invocation (a new turn, or a brand-new AdaptiveAgent instance in a
         redeployed process) would start from this shared instance's static
         construction-time defaults, forgetting skills/mode enabled earlier in
-        the same session."""
+        the same session.
+
+        Returning Content ends the invocation there, before any model call:
+        used to refuse a `dak:model` the operator does not allow."""
         try:
-            self._apply_session_config(callback_context)
+            error = self._apply_session_config(callback_context)
         except Exception as e:
             logger.error(f"CRITICAL ERROR restoring session config: {e}", exc_info=True)
+            # Still refuse a model the operator does not allow (fail closed).
+            _, error = call_config.resolve_model_selection(
+                call_config.resolve_dak_settings(callback_context), self._base_model_name
+            )
+        if error:
+            logger.info(f"Refusing call: {error}")
+            return types.Content(role="model", parts=[types.Part(text=json.dumps(error))])
         return None
 
     # --- Callbacks ---
