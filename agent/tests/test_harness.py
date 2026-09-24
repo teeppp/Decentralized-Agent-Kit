@@ -285,7 +285,7 @@ class TestBudgetedEventSummarizer:
 
 
 class TestToolOutputBudget:
-    plugin = ContextHarnessPlugin(HarnessSettings(context_window=8192))  # 2000 chars
+    plugin = ContextHarnessPlugin(HarnessSettings(context_window=8192), "test-model")  # 2000 chars
 
     @pytest.mark.asyncio
     async def test_small_result_untouched(self):
@@ -442,6 +442,66 @@ class TestRequestBudgetGuard:
         assert len(summary.parts[0].text) == len("User request: ") + 3000
 
 
+class TestPerCallHarnessSettings:
+    """PBI #138 AC3: the request budget follows the model chosen per call
+    (`dak:model`); the default model keeps the startup settings."""
+
+    DEFAULT = "openai/llamacpp"
+    OTHER = "gemini/gemini-2.5-flash"  # 1,048,576 tokens in litellm's model map
+
+    def _plugin(self):
+        return harness.ContextHarnessPlugin(HarnessSettings(context_window=8192), self.DEFAULT)
+
+    def _settings_for(self, plugin, call_settings):
+        with patch("dak_agent.call_config.resolve_dak_settings", return_value=call_settings):
+            return plugin._settings_for(MagicMock())
+
+    def test_settings_for_uses_default_when_no_call_model(self):
+        plugin = self._plugin()
+        assert self._settings_for(plugin, {}) is plugin.settings
+        assert self._settings_for(plugin, {"dak:model": self.DEFAULT}) is plugin.settings
+
+    @patch.dict(os.environ, {}, clear=False)
+    def test_settings_for_recomputes_for_different_model(self):
+        os.environ.pop("MODEL_CONTEXT_WINDOW", None)
+        plugin = self._plugin()
+
+        settings = self._settings_for(plugin, {"dak:model": self.OTHER})
+
+        assert settings.context_window == 1_048_576
+        assert settings.request_token_budget != plugin.settings.request_token_budget
+        # Cached per model: the same object on the next call.
+        assert self._settings_for(plugin, {"dak:model": self.OTHER}) is settings
+
+    @patch.dict(os.environ, {"MODEL_CONTEXT_WINDOW": "8192"})
+    def test_default_model_window_override_does_not_apply_to_other_models(self):
+        """MODEL_CONTEXT_WINDOW states the window of the startup MODEL_NAME
+        (e.g. a llama-server alias); it must not cap another model."""
+        settings = self._settings_for(self._plugin(), {"dak:model": self.OTHER})
+        assert settings.context_window == 1_048_576
+
+    def test_unknown_model_does_not_get_a_larger_window_than_the_startup_model(self):
+        """A model id absent from litellm's map (e.g. another llama-server
+        alias) has no known window; assuming 128K would let requests overflow
+        a small local server, so it keeps the startup model's window."""
+        settings = self._settings_for(self._plugin(), {"dak:model": "openai/another-local-alias"})
+        assert settings.context_window == 8192
+
+    def test_budget_ratio_is_kept_for_other_models(self):
+        plugin = harness.ContextHarnessPlugin(
+            HarnessSettings(context_window=8192, request_budget_ratio=0.5), self.DEFAULT)
+        assert self._settings_for(plugin, {"dak:model": self.OTHER}).request_token_budget == 1_048_576 // 2
+
+    @pytest.mark.asyncio
+    async def test_before_model_callback_uses_the_call_models_budget(self):
+        plugin = self._plugin()
+        request = LlmRequest(contents=[types.Content(role="user", parts=[types.Part(text="hi")])])
+        with patch("dak_agent.call_config.resolve_dak_settings", return_value={"dak:model": self.OTHER}), \
+                patch.object(harness, "fit_request_to_budget") as fit:
+            await plugin.before_model_callback(callback_context=MagicMock(), llm_request=request)
+        fit.assert_called_once_with(request, int(1_048_576 * 0.85))
+
+
 class TestEnsureUserQuery:
     def test_inserts_user_turn_when_only_model_and_tool_turns_remain(self):
         summary = types.Content(role="model", parts=[types.Part(text="User request: ...")])
@@ -542,7 +602,7 @@ async def _run(use_harness: bool, tool_calls: int = 6, thoughts: bool = False, a
     app = App(
         name="dak_agent",
         root_agent=agent,
-        plugins=[ContextHarnessPlugin(settings)] if use_harness else [],
+        plugins=[ContextHarnessPlugin(settings, "test-model")] if use_harness else [],
         events_compaction_config=compaction,
     )
     sessions = InMemorySessionService()

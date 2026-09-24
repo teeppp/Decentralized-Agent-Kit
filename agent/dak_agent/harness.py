@@ -27,8 +27,8 @@ import json
 import logging
 import os
 import re
-from dataclasses import dataclass
-from typing import Any, Optional
+from dataclasses import dataclass, replace
+from typing import Any, Dict, Optional
 
 from google.adk.apps.app import EventsCompactionConfig
 from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
@@ -39,6 +39,7 @@ from google.adk.plugins.base_plugin import BasePlugin
 from google.adk.tools import FunctionTool
 from google.genai import types
 
+from .config import get_litellm_model_name
 from .mode_manager import ModeManager
 
 logger = logging.getLogger(__name__)
@@ -676,9 +677,32 @@ def ensure_user_query(llm_request) -> bool:
 class ContextHarnessPlugin(BasePlugin):
     """App-wide plugin implementing the tool-output budget and the request guard."""
 
-    def __init__(self, settings: HarnessSettings, name: str = "dak_context_harness"):
+    def __init__(self, settings: HarnessSettings, default_model_name: str, name: str = "dak_context_harness"):
         super().__init__(name=name)
         self.settings = settings
+        self._default_model_name = default_model_name
+        self._settings_cache: Dict[str, HarnessSettings] = {default_model_name: settings}
+
+    def _settings_for(self, callback_context) -> HarnessSettings:
+        """Settings for the model this call runs on (`dak:model`, else the
+        startup model). Only the context window differs per model; the ADK
+        compaction trigger stays at the startup model's (it is fixed when
+        the App is built)."""
+        from . import call_config  # one-way: call_config never imports harness
+
+        requested = call_config.resolve_dak_settings(callback_context).get(call_config.STATE_CALL_MODEL)
+        model_name = get_litellm_model_name(requested) if isinstance(requested, str) else self._default_model_name
+        settings = self._settings_cache.get(model_name)
+        if settings is None:
+            # Not `from_env`: MODEL_CONTEXT_WINDOW states the startup model's
+            # window (e.g. a llama-server alias) and must not cap other models.
+            # A model litellm does not know (another local alias) has no known
+            # window; keep the startup one rather than assume 128K and overflow
+            # a small server.
+            window = ModeManager.known_context_window(model_name) or self.settings.context_window
+            settings = replace(self.settings, context_window=window)
+            self._settings_cache[model_name] = settings
+        return settings
 
     async def after_tool_callback(self, *, tool, tool_args, tool_context, result) -> Optional[dict]:
         tool_name = getattr(tool, "name", "tool")
@@ -719,5 +743,5 @@ class ContextHarnessPlugin(BasePlugin):
 
     async def before_model_callback(self, *, callback_context, llm_request) -> None:
         ensure_user_query(llm_request)
-        fit_request_to_budget(llm_request, self.settings.request_token_budget)
+        fit_request_to_budget(llm_request, self._settings_for(callback_context).request_token_budget)
         return None
