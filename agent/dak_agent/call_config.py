@@ -6,7 +6,8 @@ state) or as A2A message metadata (ADK's A2A request converter puts that under
 to this module.
 """
 import json
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+import os
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
@@ -15,6 +16,11 @@ from jsonschema_specifications import REGISTRY as METASCHEMAS
 DAK_PREFIX = "dak:"
 STATE_CALL_INSTRUCTION = "dak:instruction"
 STATE_CALL_OUTPUT_SCHEMA = "dak:output_schema"  # JSON Schema (dict)
+STATE_CALL_MODEL = "dak:model"  # LiteLLM model id, e.g. "bedrock/openai.gpt-5.6-luna"
+# Operator's allow-list for `dak:model` (comma-separated model ids). Unset
+# means no caller may pick a model: callers cannot exceed the operator's
+# cost limits unless the operator opens that door explicitly.
+ALLOWED_MODELS_ENV = "DAK_ALLOWED_MODELS"
 # Same value as google.adk.a2a.converters.request_converter.A2A_METADATA_KEY.
 A2A_METADATA_KEY = "a2a_metadata"
 
@@ -43,6 +49,33 @@ def resolve_dak_settings(callback_context) -> Dict[str, Any]:
     # with this invocation's pending delta.
     settings.update(_dak_keys(state.to_dict() if hasattr(state, "to_dict") else state))
     return settings
+
+
+def resolve_allowed_models() -> Optional[FrozenSet[str]]:
+    """The operator's allow-list, or None when `DAK_ALLOWED_MODELS` is unset."""
+    raw = os.environ.get(ALLOWED_MODELS_ENV)
+    if raw is None:
+        return None
+    return frozenset(m.strip() for m in raw.split(",") if m.strip())
+
+
+def resolve_model_selection(
+    call_settings: Dict[str, Any], default_model_name: str
+) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """The model this call runs on, and an error dict when the caller asked
+    for a model the operator does not allow (the call must then not reach
+    any LLM)."""
+    requested = call_settings.get(STATE_CALL_MODEL)
+    if requested is None:
+        return default_model_name, None
+    allowed = resolve_allowed_models()
+    if allowed is None or not isinstance(requested, str) or requested not in allowed:
+        return default_model_name, {
+            "error": "model_not_allowed",
+            "requested_model": requested,
+            "allowed_models": sorted(allowed or []),
+        }
+    return requested, None
 
 
 def _issue_path(error) -> str:

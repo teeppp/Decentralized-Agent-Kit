@@ -124,3 +124,44 @@ def test_validate_call_output_reports_too_deeply_nested_json():
 
     assert parsed is None
     assert issues[0]["message"].startswith("invalid JSON:")
+
+
+def test_resolve_model_selection_returns_default_when_unspecified(monkeypatch):
+    monkeypatch.setenv("DAK_ALLOWED_MODELS", "a,b")
+
+    assert call_config.resolve_model_selection({}, "default-model") == ("default-model", None)
+
+
+def test_resolve_model_selection_rejects_when_allow_list_unset(monkeypatch):
+    monkeypatch.delenv("DAK_ALLOWED_MODELS", raising=False)
+
+    model, error = call_config.resolve_model_selection({"dak:model": "a"}, "default-model")
+
+    assert model == "default-model"
+    assert error == {"error": "model_not_allowed", "requested_model": "a", "allowed_models": []}
+
+
+def test_resolve_model_selection_rejects_when_not_in_allow_list(monkeypatch):
+    monkeypatch.setenv("DAK_ALLOWED_MODELS", " b , a ,,")
+
+    model, error = call_config.resolve_model_selection({"dak:model": "c"}, "default-model")
+
+    assert model == "default-model"
+    assert error["error"] == "model_not_allowed"
+    assert error["requested_model"] == "c"
+    assert error["allowed_models"] == ["a", "b"]
+
+
+def test_resolve_model_selection_accepts_when_allowed(monkeypatch):
+    monkeypatch.setenv("DAK_ALLOWED_MODELS", "a,b")
+
+    assert call_config.resolve_model_selection({"dak:model": "a"}, "default-model") == ("a", None)
+
+
+def test_resolve_model_selection_rejects_non_string_model(monkeypatch):
+    monkeypatch.setenv("DAK_ALLOWED_MODELS", "a")
+
+    model, error = call_config.resolve_model_selection({"dak:model": ["a"]}, "default-model")
+
+    assert model == "default-model"
+    assert error["error"] == "model_not_allowed"
