@@ -9,6 +9,7 @@ from typing import Any, Dict, Mapping
 
 DAK_PREFIX = "dak:"
 STATE_CALL_INSTRUCTION = "dak:instruction"
+STATE_CALL_OUTPUT_SCHEMA = "dak:output_schema"  # JSON Schema (dict)
 # Same value as google.adk.a2a.converters.request_converter.A2A_METADATA_KEY.
 A2A_METADATA_KEY = "a2a_metadata"
 

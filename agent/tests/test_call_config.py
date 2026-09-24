@@ -31,6 +31,13 @@ def test_resolve_dak_settings_reads_a2a_metadata():
     assert call_config.resolve_dak_settings(ctx) == {"dak:instruction": "from a2a"}
 
 
+def test_resolve_dak_settings_reads_output_schema():
+    schema = {"type": "object", "properties": {"date": {"type": "string"}}, "required": ["date"]}
+    ctx = _context(state={call_config.STATE_CALL_OUTPUT_SCHEMA: schema})
+
+    assert call_config.resolve_dak_settings(ctx)["dak:output_schema"] == schema
+
+
 def test_resolve_dak_settings_without_run_config_reads_state_only():
     ctx = SimpleNamespace(state=State(value={"dak:instruction": "s"}, delta={}))
 
