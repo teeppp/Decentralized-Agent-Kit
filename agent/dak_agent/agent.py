@@ -111,6 +111,6 @@ root_agent = AdaptiveAgent(
 app = App(
     name="dak_agent",
     root_agent=root_agent,
-    plugins=[ContextHarnessPlugin(harness_settings)] if use_harness else [],
+    plugins=[ContextHarnessPlugin(harness_settings, formatted_model_name)] if use_harness else [],
     events_compaction_config=make_compaction_config(harness_settings, llm=model) if use_harness else None,
 )
