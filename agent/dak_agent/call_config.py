@@ -5,7 +5,11 @@ state) or as A2A message metadata (ADK's A2A request converter puts that under
 `RunConfig.custom_metadata["a2a_metadata"]`). Later PBIs add more `dak:` keys
 to this module.
 """
-from typing import Any, Dict, Mapping
+import json
+from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
 DAK_PREFIX = "dak:"
 STATE_CALL_INSTRUCTION = "dak:instruction"
@@ -38,3 +42,31 @@ def resolve_dak_settings(callback_context) -> Dict[str, Any]:
     # with this invocation's pending delta.
     settings.update(_dak_keys(state.to_dict() if hasattr(state, "to_dict") else state))
     return settings
+
+
+def _issue_path(error) -> str:
+    """"/"-joined path of the offending value. A missing required property is
+    reported by jsonschema on its parent object; name the property itself."""
+    path = [str(p) for p in error.absolute_path]
+    if error.validator == "required":
+        missing = [p for p in error.validator_value if error.message.startswith(repr(p))]
+        path += missing[:1]
+    return "/".join(path)
+
+
+def validate_call_output(schema: Dict[str, Any], text: str) -> Tuple[Optional[Any], List[Dict[str, str]]]:
+    """Check a final model reply against the call's `dak:output_schema`.
+    Returns `(parsed_json, [])` on success, `(None, issues)` otherwise, each
+    issue being `{"path": "a/b", "message": "..."}`."""
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        return None, [{"path": "", "message": f"invalid output_schema: {exc.message}"}]
+    try:
+        parsed = json.loads(text)
+    except ValueError as exc:
+        return None, [{"path": "", "message": f"invalid JSON: {exc}"}]
+    errors = sorted(Draft202012Validator(schema).iter_errors(parsed), key=lambda e: [str(p) for p in e.absolute_path])
+    if errors:
+        return None, [{"path": _issue_path(e), "message": e.message} for e in errors]
+    return parsed, []

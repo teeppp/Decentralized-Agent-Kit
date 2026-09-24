@@ -42,3 +42,43 @@ def test_resolve_dak_settings_without_run_config_reads_state_only():
     ctx = SimpleNamespace(state=State(value={"dak:instruction": "s"}, delta={}))
 
     assert call_config.resolve_dak_settings(ctx) == {"dak:instruction": "s"}
+
+
+DATE_SCHEMA = {"type": "object", "properties": {"date": {"type": "string"}}, "required": ["date"]}
+
+
+def test_validate_call_output_returns_field_path_and_reason():
+    parsed, issues = call_config.validate_call_output(DATE_SCHEMA, '{"note": "missing date"}')
+
+    assert parsed is None
+    assert len(issues) == 1
+    assert issues[0]["path"] == "date"
+    assert "required" in issues[0]["message"]
+
+
+def test_validate_call_output_reports_nested_path():
+    schema = {"type": "object", "properties": {"trip": {"type": "object", "required": ["to"], "properties": {
+        "days": {"type": "integer"}, "to": {"type": "string"}}}}}
+
+    _, issues = call_config.validate_call_output(schema, '{"trip": {"days": "three"}}')
+
+    assert sorted(i["path"] for i in issues) == ["trip/days", "trip/to"]
+
+
+def test_validate_call_output_accepts_matching_json():
+    assert call_config.validate_call_output(DATE_SCHEMA, '{"date": "2026-09-22"}') == ({"date": "2026-09-22"}, [])
+
+
+def test_validate_call_output_reports_invalid_json():
+    parsed, issues = call_config.validate_call_output(DATE_SCHEMA, "not json")
+
+    assert parsed is None
+    assert issues[0]["path"] == ""
+    assert issues[0]["message"].startswith("invalid JSON:")
+
+
+def test_validate_call_output_reports_invalid_schema():
+    parsed, issues = call_config.validate_call_output({"type": "no-such-type"}, "{}")
+
+    assert parsed is None
+    assert issues[0]["message"].startswith("invalid output_schema:")
