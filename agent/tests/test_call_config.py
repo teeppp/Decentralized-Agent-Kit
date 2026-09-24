@@ -42,3 +42,85 @@ def test_resolve_dak_settings_without_run_config_reads_state_only():
     ctx = SimpleNamespace(state=State(value={"dak:instruction": "s"}, delta={}))
 
     assert call_config.resolve_dak_settings(ctx) == {"dak:instruction": "s"}
+
+
+DATE_SCHEMA = {"type": "object", "properties": {"date": {"type": "string"}}, "required": ["date"]}
+
+
+def test_validate_call_output_returns_field_path_and_reason():
+    parsed, issues = call_config.validate_call_output(DATE_SCHEMA, '{"note": "missing date"}')
+
+    assert parsed is None
+    assert len(issues) == 1
+    assert issues[0]["path"] == "date"
+    assert "required" in issues[0]["message"]
+
+
+def test_validate_call_output_reports_nested_path():
+    schema = {"type": "object", "properties": {"trip": {"type": "object", "required": ["to"], "properties": {
+        "days": {"type": "integer"}, "to": {"type": "string"}}}}}
+
+    _, issues = call_config.validate_call_output(schema, '{"trip": {"days": "three"}}')
+
+    assert sorted(i["path"] for i in issues) == ["trip/days", "trip/to"]
+
+
+def test_validate_call_output_accepts_matching_json():
+    assert call_config.validate_call_output(DATE_SCHEMA, '{"date": "2026-09-22"}') == ({"date": "2026-09-22"}, [])
+
+
+def test_validate_call_output_reports_invalid_json():
+    parsed, issues = call_config.validate_call_output(DATE_SCHEMA, "not json")
+
+    assert parsed is None
+    assert issues[0]["path"] == ""
+    assert issues[0]["message"].startswith("invalid JSON:")
+
+
+def test_validate_call_output_reports_invalid_schema():
+    parsed, issues = call_config.validate_call_output({"type": "no-such-type"}, "{}")
+
+    assert parsed is None
+    assert issues[0]["message"].startswith("invalid output_schema:")
+
+
+def test_validate_call_output_resolves_local_refs():
+    schema = {"$defs": {"d": {"type": "string"}}, "type": "object",
+              "properties": {"date": {"$ref": "#/$defs/d"}}}
+
+    assert call_config.validate_call_output(schema, '{"date": "x"}') == ({"date": "x"}, [])
+    assert call_config.validate_call_output(schema, '{"date": 1}')[1][0]["path"] == "date"
+
+
+def test_validate_call_output_reports_unresolvable_ref():
+    parsed, issues = call_config.validate_call_output({"$ref": "#/$defs/missing"}, "{}")
+
+    assert parsed is None
+    assert issues[0]["message"].startswith("invalid output_schema:")
+
+
+def test_validate_call_output_never_fetches_remote_refs():
+    """A caller-supplied schema must not make the agent fetch URLs (SSRF)."""
+    from unittest.mock import patch
+
+    with patch("urllib.request.urlopen", side_effect=AssertionError("fetched a remote $ref")) as urlopen:
+        parsed, issues = call_config.validate_call_output(
+            {"$ref": "http://169.254.169.254/latest/meta-data/"}, "{}")
+
+    urlopen.assert_not_called()
+    assert parsed is None
+    assert issues[0]["message"].startswith("invalid output_schema:")
+
+
+def test_validate_call_output_rejects_non_standard_json_constants():
+    for text in ("NaN", "Infinity", "-Infinity", '{"x": NaN}'):
+        parsed, issues = call_config.validate_call_output({}, text)
+        assert parsed is None, text
+        assert issues[0]["message"].startswith("invalid JSON:"), text
+
+
+def test_validate_call_output_reports_too_deeply_nested_json():
+    parsed, issues = call_config.validate_call_output({}, "[" * 100_000)
+
+    assert parsed is None
+    assert issues[0]["message"].startswith("invalid JSON:")

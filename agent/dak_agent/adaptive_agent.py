@@ -1,4 +1,5 @@
 """AdaptiveAgent: an LlmAgent with Dynamic Mode Switching and Agent Skills."""
+import json
 import logging
 import os
 from typing import Any, Dict, List, MutableMapping, Optional, Tuple
@@ -6,6 +7,7 @@ from typing import Any, Dict, List, MutableMapping, Optional, Tuple
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.llm_response import LlmResponse
+from google.genai import types
 from pydantic import ConfigDict, Field, PrivateAttr
 import inspect
 
@@ -345,10 +347,16 @@ class AdaptiveAgent(LlmAgent):
                     logger.info("Enforcer blocked response")
                     return result
 
-            # 2. Record any switch_mode tool call
+            # 2. A final reply to a call with `dak:output_schema` must match it.
+            #    ADK's own check needs `output_key`, which DAK does not use.
+            schema_failure = self._check_call_output(llm_response, callback_context)
+            if schema_failure is not None:
+                return schema_failure
+
+            # 3. Record any switch_mode tool call
             self._check_for_switch_request(llm_response, callback_context)
 
-            # 3. Switch modes if the LLM asked for it. Context-window pressure is
+            # 4. Switch modes if the LLM asked for it. Context-window pressure is
             #    handled by the context harness (ADK compaction), not here.
             if not self._disable_mode_switching and self._mode_manager.should_switch(callback_context.state):
                 await self._perform_mode_switch(callback_context)
@@ -357,6 +365,30 @@ class AdaptiveAgent(LlmAgent):
         except Exception as e:
             logger.error(f"CRITICAL ERROR in _wrapped_callback: {e}", exc_info=True)
             return None
+
+    def _check_call_output(
+        self, llm_response: LlmResponse, callback_context: CallbackContext
+    ) -> Optional[LlmResponse]:
+        """Validate a final text reply against this call's `dak:output_schema`.
+        Returns a replacement reply carrying the structured failure, or None
+        (no schema, not a final text reply, or the reply is valid)."""
+        schema = call_config.resolve_dak_settings(callback_context).get(call_config.STATE_CALL_OUTPUT_SCHEMA)
+        content = llm_response.content
+        if schema is None or llm_response.partial or not content or not content.parts:
+            return None
+        if any(getattr(part, "function_call", None) for part in content.parts):
+            return None
+        text = "".join(part.text for part in content.parts if part.text and not part.thought)
+        try:
+            _, issues = call_config.validate_call_output(schema, text)
+        except Exception as e:  # fail closed: never let an unchecked reply through
+            logger.error(f"dak:output_schema validation crashed: {e}", exc_info=True)
+            issues = [{"path": "", "message": f"validation error: {e}"}]
+        if not issues:
+            return None
+        logger.info(f"Reply failed dak:output_schema: {issues}")
+        failure = {"error": "output_schema_validation_failed", "issues": issues}
+        return LlmResponse(content=types.Content(role="model", parts=[types.Part(text=json.dumps(failure))]))
 
     def _check_for_switch_request(self, llm_response: LlmResponse, callback_context: CallbackContext):
         """Check if the LLM called the switch_mode tool."""

@@ -22,6 +22,7 @@ dependencies = [
     "opentelemetry-sdk>=1.27.0",
     "opentelemetry-exporter-otlp>=1.27.0",
     "litellm>=1.91.0",
+    "jsonschema>=4.25,<5",
     # Solana + AP2/x402 support
     "solana>=0.40.0",
     "solders>=0.21.0",
