@@ -79,3 +79,30 @@ async def test_call_tools_subset_sends_only_the_named_tools():
 async def test_without_call_tools_the_built_in_tools_are_sent_as_before():
     declared = await _declared_tools()
     assert {"switch_mode", "list_skills", "enable_skill"} <= set(declared)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["switch_mode", 3, ["switch_mode", 1], {"other": 1}])
+async def test_malformed_call_tools_is_refused_without_calling_the_llm(bad):
+    """A caller that asked for a restriction must not silently get every tool."""
+    import json
+
+    from google.adk.artifacts import InMemoryArtifactService
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+
+    llm, requests = _recording_llm()
+    app = _app(llm)
+    sessions = InMemorySessionService()
+    session = await sessions.create_session(app_name="dak_agent", user_id="u")
+    runner = Runner(app=app, session_service=sessions, artifact_service=InMemoryArtifactService())
+    texts = []
+    async for event in runner.run_async(
+        user_id="u", session_id=session.id,
+        new_message=types.Content(role="user", parts=[types.Part(text="hi")]),
+        state_delta={"dak:tools": bad},
+    ):
+        texts += [p.text for p in (event.content.parts if event.content else []) if p.text]
+
+    assert requests == []
+    assert json.loads(texts[-1])["error"] == "invalid_tools"

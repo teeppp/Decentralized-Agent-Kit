@@ -1,5 +1,7 @@
 import os
 import shutil
+
+import pytest
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -296,3 +298,21 @@ class TestEnableSkillMissingDirectory(unittest.IsolatedAsyncioTestCase):
             result = await enable(skill_name="demo", tool_context=ctx)
         self.assertIn("not found", result)
         self.assertNotIn("dak_active_skills", ctx.state)
+
+
+@pytest.mark.asyncio
+async def test_enable_skill_says_so_when_tools_are_fixed_by_the_call():
+    """With `dak:tools`, the call's tools are fixed; enable_skill must not claim
+    success (the skill's tools would never appear)."""
+    from unittest.mock import MagicMock, patch as _patch
+
+    from dak_agent import skill_tools
+
+    agent = MagicMock()
+    tool_context = MagicMock()
+    tool_context.state = {}
+    enable_skill = next(t for t in skill_tools.make_skill_tools(agent) if t.name == "enable_skill").func
+    with _patch("dak_agent.call_config.resolve_dak_settings", return_value={"dak:tools": ["enable_skill"]}):
+        result = await enable_skill("filesystem", tool_context=tool_context)
+    assert "dak:tools" in result
+    assert "dak_active_skills" not in tool_context.state

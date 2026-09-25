@@ -19,7 +19,8 @@ STATE_CALL_OUTPUT_SCHEMA = "dak:output_schema"  # JSON Schema (dict)
 # Tools for this call. A list of names: only those built-in tools and those
 # names from the default MCP server; [] means no tools at all.
 STATE_CALL_TOOLS = "dak:tools"
-STATE_CALL_MODEL = "dak:model"  # LiteLLM model id, e.g. "bedrock/openai.gpt-5.6-luna"
+STATE_CALL_MODEL = "dak:model"
+TRANSFER_TOOL = "transfer_to_agent"  # ADK's A2A delegation tool (from sub_agents)  # LiteLLM model id, e.g. "bedrock/openai.gpt-5.6-luna"
 # Operator's allow-list for `dak:model` (comma-separated model ids). Unset
 # means no caller may pick a model: callers cannot exceed the operator's
 # cost limits unless the operator opens that door explicitly.
@@ -119,3 +120,12 @@ def validate_call_output(schema: Dict[str, Any], text: str) -> Tuple[Optional[An
     if errors:
         return None, [{"path": _issue_path(e), "message": e.message} for e in errors]
     return parsed, []
+
+
+def validate_call_tools(call_settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """An error dict when `dak:tools` is present but not a list of tool names.
+    A caller who asked for a restriction must not silently get every tool."""
+    value = call_settings.get(STATE_CALL_TOOLS)
+    if value is None or (isinstance(value, list) and all(isinstance(n, str) for n in value)):
+        return None
+    return {"error": "invalid_tools", "expected": 'a list of tool names, e.g. ["read_file"]; [] for no tools'}

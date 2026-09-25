@@ -277,7 +277,11 @@ class AdaptiveAgent(LlmAgent):
         simply matches nothing). An empty list means no tools at all."""
         wanted = {str(n) for n in tool_names}
         tools = [t for t in self._builtin_tools if getattr(t, "name", None) in wanted]
-        rest = wanted - {getattr(t, "name", None) for t in tools}
+        # Only names the default MCP server really has (loaded by
+        # `_restore_session_config`): the toolset cache is keyed by the name
+        # set, and each cached toolset keeps a connection, so arbitrary
+        # caller-chosen names must not create new entries.
+        rest = (wanted - {getattr(t, "name", None) for t in tools}) & set(self.available_remote_tools)
         if rest and self._has_default_mcp_toolset:
             tools.append(self._cached_mcp_toolset(self._mcp_url, "http", rest))
         return tools
@@ -327,6 +331,7 @@ class AdaptiveAgent(LlmAgent):
         live = self._live_agent(context)
         call_settings = call_config.resolve_dak_settings(context)
         model_name, model_error = call_config.resolve_model_selection(call_settings, self._base_model_name)
+        tools_error = call_config.validate_call_tools(call_settings)
         instruction = self._resolve_session_instruction(state, call_settings)
         plan = self._plan_section(state)
         if call_settings.get(call_config.STATE_CALL_INSTRUCTION):
@@ -349,11 +354,16 @@ class AdaptiveAgent(LlmAgent):
         # it on the request as `response_schema` (LiteLlm supports it
         # alongside tools).
         live.output_schema = call_settings.get(call_config.STATE_CALL_OUTPUT_SCHEMA)
-        live.tools = self._resolve_session_tools(state, call_settings)
+        live.tools = [] if tools_error else self._resolve_session_tools(state, call_settings)
+        call_tools = call_settings.get(call_config.STATE_CALL_TOOLS)
+        if isinstance(call_tools, list) and call_config.TRANSFER_TOOL not in call_tools:
+            # ADK adds transfer_to_agent from sub_agents on its own; drop the
+            # A2A peers for this call unless the caller named that tool.
+            live.sub_agents = []
         live._active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
         skill_tools.invalidate_canonical_tools_cache(context)
-        if model_error:
-            return model_error
+        if model_error or tools_error:
+            return model_error or tools_error
         if call_settings.get(call_config.STATE_CALL_MODEL) is not None:
             live.model = self._model_for(model_name)
         return None
@@ -368,14 +378,21 @@ class AdaptiveAgent(LlmAgent):
 
         Returning Content ends the invocation there, before any model call:
         used to refuse a `dak:model` the operator does not allow."""
+        if call_config.resolve_dak_settings(callback_context).get(call_config.STATE_CALL_TOOLS) is not None:
+            try:
+                await self.ensure_remote_tools_loaded()  # names for `dak:tools`
+            except Exception as e:
+                logger.warning(f"Could not list the default MCP tools: {e}")
         try:
             error = self._apply_session_config(callback_context)
         except Exception as e:
             logger.error(f"CRITICAL ERROR restoring session config: {e}", exc_info=True)
             # Still refuse a model the operator does not allow (fail closed).
-            _, error = call_config.resolve_model_selection(
-                call_config.resolve_dak_settings(callback_context), self._base_model_name
-            )
+            call_settings = call_config.resolve_dak_settings(callback_context)
+            _, error = call_config.resolve_model_selection(call_settings, self._base_model_name)
+            error = error or call_config.validate_call_tools(call_settings)
+            if call_settings.get(call_config.STATE_CALL_TOOLS) is not None:
+                self._live_agent(callback_context).tools = []  # the caller restricted tools: none, not all
         if error:
             logger.info(f"Refusing call: {error}")
             return types.Content(role="model", parts=[types.Part(text=json.dumps(error))])
