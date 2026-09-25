@@ -27,6 +27,9 @@ STATE_CALL_TOOLS = "dak:tools"
 ALLOWED_MCP_URLS_ENV = "DAK_ALLOWED_MCP_URLS"
 MCP_CONNECTION_TYPES = ("http", "sse")
 TRANSFER_TOOL = "transfer_to_agent"  # ADK's A2A delegation tool (from sub_agents)
+# Written by DAK (not the caller): the caller's MCP servers that could not be
+# reached on this call, [{"url", "reason"}]. Cleared when they are reachable.
+STATE_TOOLS_ERROR = "dak:tools_error"
 STATE_CALL_MODEL = "dak:model"  # LiteLLM model id, e.g. "bedrock/openai.gpt-5.6-luna"
 # Operator's allow-list for `dak:model` (comma-separated model ids). Unset
 # means no caller may pick a model: callers cannot exceed the operator's

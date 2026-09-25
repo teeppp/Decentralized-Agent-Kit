@@ -124,3 +124,23 @@ def test_caller_mcp_not_in_the_allow_list_is_refused(agent, fake_llm):
     errors = [json.loads(t) for t in event_texts(events) if "mcp_server_not_allowed" in t]
     assert errors and errors[-1]["requested_urls"] == ["http://not-allowed:9000/mcp"]
     assert _llm_requests(MODEL) == before  # no LLM call
+
+
+def test_unreachable_caller_mcp_ends_the_turn_with_a_reason(agent, fake_llm):
+    """The caller's MCP server is down (no such host on the compose network):
+    the turn still completes, and the reason is recorded in the session state."""
+    fake_llm.clear(MODEL)
+    fake_llm.script(MODEL, [fake_llm.text("the tool server is unavailable")])
+    url = "http://caller-mcp-unreachable:8000/mcp"  # allowed in docker-compose.test.yml, but no such host
+
+    events = _run(agent, agent.create_session(), "use my tools", {"dak:tools": {"mcp_servers": [{"url": url}]}})
+
+    deltas = [e.get("actions", {}).get("stateDelta") or {} for e in events]
+    errors = [d["dak:tools_error"] for d in deltas if d.get("dak:tools_error")]
+    assert errors and errors[-1][0]["url"] == url
+    assert errors[-1][0]["reason"].startswith("unreachable")
+    assert any("the tool server is unavailable" in t for t in event_texts(events))
+    system = httpx.get(f"{FAKE_LLM_URL}/requests/{MODEL}", timeout=10.0).json()[-1]["messages"][0]
+    content = system["content"] if isinstance(system["content"], str) else "".join(
+        c.get("text", "") for c in system["content"])
+    assert url in content  # the model was told which tools are unavailable
