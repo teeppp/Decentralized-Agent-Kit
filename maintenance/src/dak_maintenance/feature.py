@@ -7,6 +7,7 @@ summarization. No open web search needed — the deps are already known.
 from __future__ import annotations
 
 import re
+import sys
 from typing import Callable
 
 from .changelog import get_changelog
@@ -73,6 +74,7 @@ def propose_feature_adoptions(
 ) -> list[Proposal]:
     """deps: list of {"package","from","to"} for recently updated dependencies."""
     proposals: list[Proposal] = []
+    attempted = failed = 0
     for dep in deps:
         pkg = dep.get("package", "")
         frm = dep.get("from", "")
@@ -80,10 +82,17 @@ def propose_feature_adoptions(
         changelog = dep.get("changelog") or get_changelog_fn(pkg, frm, to)
         if not (changelog or "").strip():
             continue
-        raw = complete(_PROMPT.format(
+        prompt = _PROMPT.format(
             charter=charter[:4000], package=pkg, from_version=frm,
             to_version=to, changelog=changelog[:8000],
-        ))
+        )
+        attempted += 1
+        try:
+            raw = complete(prompt)
+        except Exception as e:  # e.g. a transient 503: skip this dep, keep the weekly run going
+            failed += 1
+            print(f"warn: {pkg} の提案を作れず飛ばした（{e}）", file=sys.stderr)
+            continue
         data = extract_json(raw)
         for it in (data if isinstance(data, list) else []):
             if not isinstance(it, dict):
@@ -99,4 +108,8 @@ def propose_feature_adoptions(
                 f"_自動生成 (feature-sync)。人間が取り込み価値を最終判断する。_"
             )
             proposals.append(Proposal(title=title, body=body, labels=["feature-sync", "automation"]))
+    if attempted and failed == attempted:
+        # A wrong key, model or URL fails every call; do not report it as a
+        # quiet week with no proposals.
+        raise RuntimeError(f"every LLM call failed ({failed} deps); check MAINT_LLM_*")
     return dedupe(proposals, existing_titles or [], max_items)

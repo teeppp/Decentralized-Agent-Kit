@@ -47,3 +47,49 @@ def test_charter_review_dedupes_existing():
         quarter="2026-Q3", existing_titles=["Charter review 2026-Q3"],
     )
     assert proposals == []
+
+
+def test_a_failing_llm_call_skips_only_that_dependency(capsys):
+    """One transient LLM error (e.g. 503) must not fail the whole weekly run."""
+    from dak_maintenance.feature import propose_feature_adoptions
+
+    def complete(prompt):
+        if "pkg-a" in prompt:
+            raise RuntimeError("Server error '503 Service Unavailable'")
+        return '[{"title": "Adopt B feature", "feature": "f", "component": "agent", "sketch": "s"}]'
+
+    deps = [{"package": "pkg-a", "from": "1", "to": "2", "changelog": "New: x"},
+            {"package": "pkg-b", "from": "1", "to": "2", "changelog": "New: y"}]
+
+    proposals = propose_feature_adoptions(deps, complete)
+
+    assert [p.title for p in proposals] == ["Adopt B feature"]
+    assert "pkg-a" in capsys.readouterr().err
+
+
+def test_every_llm_call_failing_fails_the_run():
+    """A wrong key/model/URL makes every call fail; that must not look like a
+    quiet week with no proposals."""
+    import pytest
+
+    from dak_maintenance.feature import propose_feature_adoptions
+
+    def complete(prompt):
+        raise RuntimeError("401 Unauthorized")
+
+    deps = [{"package": "a", "from": "1", "to": "2", "changelog": "New: x"},
+            {"package": "b", "from": "1", "to": "2", "changelog": "New: y"}]
+
+    with pytest.raises(RuntimeError, match="every LLM call failed"):
+        propose_feature_adoptions(deps, complete)
+
+
+def test_a_prompt_template_error_is_not_swallowed(monkeypatch):
+    import pytest
+
+    from dak_maintenance import feature
+
+    monkeypatch.setattr(feature, "_PROMPT", "{undefined_placeholder}")
+    with pytest.raises(KeyError):
+        feature.propose_feature_adoptions(
+            [{"package": "a", "from": "1", "to": "2", "changelog": "New: x"}], lambda p: "[]")
