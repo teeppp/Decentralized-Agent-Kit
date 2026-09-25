@@ -46,7 +46,7 @@ def test_collect_deps_cli_reads_pr_json_from_stdin(monkeypatch, capsys):
 
     out = capsys.readouterr()
     assert json.loads(out.out) == [{"package": "mcp", "from": "1.22.0", "to": "2.2.0"}]
-    assert "1" in out.err  # one PR skipped, reported on stderr
+    assert "note: 1 件の deps-labeled PR" in out.err  # one PR skipped, reported on stderr
 
 
 def test_collect_deps_cli_caps_the_list(monkeypatch, capsys):
@@ -62,3 +62,19 @@ def test_collect_deps_cli_empty_input_is_an_empty_list(monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("[]"))
     assert main(["collect-deps"]) == 0
     assert json.loads(capsys.readouterr().out) == []
+
+
+def test_collect_deps_cli_explains_empty_or_broken_input(monkeypatch, capsys):
+    """An upstream `gh pr list` failure leaves stdin empty; say so instead of a
+    bare JSONDecodeError traceback (the #157 symptom)."""
+    for text in ("", "not json"):
+        monkeypatch.setattr("sys.stdin", io.StringIO(text))
+        assert main(["collect-deps"]) == 2
+        assert "error:" in capsys.readouterr().err
+
+
+def test_collect_deps_cli_rejects_a_negative_max_items():
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main(["collect-deps", "--max-items", "-1"])

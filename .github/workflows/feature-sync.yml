@@ -38,6 +38,7 @@ jobs:
           # 抽出は dak-maint collect-deps（maintenance/tests/test_collect_deps.py）。
           # 以前はここでパイプとヒアドキュメントの両方を python の標準入力に向けており、
           # gh の出力が捨てられて毎週 JSONDecodeError で止まっていた（#157）。
+          set -o pipefail  # gh の失敗を、次の手順の解析エラーに隠さない
           uv sync
           since=$(date -u -d '14 days ago' +%Y-%m-%d)
           gh pr list --state merged --search "label:deps merged:>=$since" \
