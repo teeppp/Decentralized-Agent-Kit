@@ -325,5 +325,50 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Hello operator.", system)
         self.assertIn("1. [pending] fill {summary}", system)
 
+    async def test_plan_written_mid_invocation_reaches_the_next_model_call(self):
+        """Compaction happens inside long invocations, so the plan must be in
+        the instruction from the model call right after write_todos, not only
+        from the next turn."""
+        from google.adk.apps import App
+        from google.adk.artifacts import InMemoryArtifactService
+        from google.adk.models.base_llm import BaseLlm
+        from google.adk.models.llm_response import LlmResponse
+        from google.adk.runners import Runner
+        from google.adk.sessions import InMemorySessionService
+        from google.adk.tools import FunctionTool
+        from google.genai import types
+
+        from dak_agent.builtin_tools import write_todos
+
+        requests = []
+
+        class PlanThenAnswer(BaseLlm):
+            async def generate_content_async(self, llm_request, stream=False):
+                requests.append(llm_request)
+                if len(requests) == 1:
+                    part = types.Part(function_call=types.FunctionCall(
+                        id="fc-1", name="write_todos", args={"items": [{"step": "check", "status": "pending"}]}))
+                else:
+                    part = types.Part(text="done")
+                yield LlmResponse(content=types.Content(role="model", parts=[part]))
+
+        agent = AdaptiveAgent(model=PlanThenAnswer(model="plan"), name="dak_agent",
+                              instruction="Base.", tools=[FunctionTool(write_todos)])
+        sessions = InMemorySessionService()
+        session = await sessions.create_session(app_name="dak_agent", user_id="u")
+        runner = Runner(app=App(name="dak_agent", root_agent=agent), session_service=sessions,
+                        artifact_service=InMemoryArtifactService())
+
+        with patch("dak_agent.remote_tools.discover_remote_tools", return_value={}):
+            async for _ in runner.run_async(
+                user_id="u", session_id=session.id,
+                new_message=types.Content(role="user", parts=[types.Part(text="hi")]),
+            ):
+                pass
+
+        self.assertEqual(len(requests), 2)  # one invocation, two model calls
+        self.assertNotIn("# Current Plan", requests[0].config.system_instruction)
+        self.assertIn("1. [pending] check", requests[1].config.system_instruction)
+
 if __name__ == '__main__':
     unittest.main()
