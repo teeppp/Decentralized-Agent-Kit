@@ -53,6 +53,8 @@
        - AWS に GitHub の OIDC プロバイダ（`token.actions.githubusercontent.com`、audience `sts.amazonaws.com`）と、`repo:<owner>/<repo>:ref:refs/heads/main` だけが引き受けられるロールを作る。権限は使う inference profile とその基になるモデルへの `bedrock:InvokeModel` だけ
        - `gh variable set MAINT_AWS_ROLE_ARN --body "<ロールの ARN>"`（リージョンを変えるなら `MAINT_AWS_REGION`。既定 `us-east-1`）
        - Bedrock に切り替えたら `MAINT_LLM_BASE_URL` を消す（`dependency-triage` は BASE_URL があるときだけ LLM で判定する。Dependabot の PR は main ではないのでロールを引き受けられず、ヒューリスティックの判定のまま動く）
+       - `vars.MAINT_ASSESSOR=llm` を明示しているなら外す（明示すると triage が Bedrock を認証情報なしで呼び、毎回失敗してヒューリスティックに落ちる）
+       - AWS の認証情報は、LLM を呼ぶ手順にだけ渡す（依存の導入や Issue の起票の手順には渡さない）。応答が途中で切れた・空のときは失敗として扱う（「提案 0 件」には見せない）
    - **triage で LLM 評価も使う場合**は上記を **Dependabot secrets/variables にも登録**
      （Dependabot PR には通常の Actions secrets が渡らないため）。未設定なら triage は
      heuristic（キーワード）評価にフォールバックし、reasoning 系は提案 0 件で失敗しない。

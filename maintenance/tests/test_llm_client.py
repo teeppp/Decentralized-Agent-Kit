@@ -29,7 +29,7 @@ class FakeBedrock:
 
     def converse(self, **kwargs):
         self.calls.append(kwargs)
-        return {"output": {"message": {"role": "assistant", "content": [
+        return {"stopReason": "end_turn", "output": {"message": {"role": "assistant", "content": [
             {"reasoningContent": {"reasoningText": {"text": "thinking"}}},
             {"text": '[{"title": "x"}]'}]}}}
 
@@ -74,3 +74,27 @@ def test_bedrock_region_defaults_to_us_east_1(monkeypatch, fake_boto3):
 def test_bedrock_does_not_need_a_base_url(monkeypatch, fake_boto3):
     monkeypatch.setenv("MAINT_LLM_MODEL", "bedrock/global.openai.gpt-6-luna")
     assert llm_client.make_complete() is not None
+
+
+@pytest.mark.parametrize("stop, content", [
+    ("max_tokens", [{"reasoningContent": {"reasoningText": {"text": "long thinking"}}}]),
+    ("content_filtered", [{"text": ""}]),
+    ("end_turn", [{"reasoningContent": {"reasoningText": {"text": "only thinking"}}}]),
+])
+def test_bedrock_incomplete_or_empty_answer_raises(monkeypatch, fake_boto3, stop, content):
+    """A truncated/filtered/empty reply must not look like "no proposals"."""
+    client, _ = fake_boto3
+    client.converse = lambda **kw: {"stopReason": stop, "output": {"message": {"content": content}}}
+    monkeypatch.setenv("MAINT_LLM_MODEL", "bedrock/global.openai.gpt-6-luna")
+    with pytest.raises(RuntimeError):
+        llm_client.make_complete()("hi")
+
+
+def test_bedrock_client_does_not_resend_on_read_timeouts(monkeypatch, fake_boto3):
+    """Bedrock keeps generating after a client timeout; a resend is billed again."""
+    _, made = fake_boto3
+    monkeypatch.setenv("MAINT_LLM_MODEL", "bedrock/global.openai.gpt-6-luna")
+    llm_client.make_complete()
+    config = made["config"]
+    assert config.read_timeout >= 300
+    assert config.retries["total_max_attempts"] == 1

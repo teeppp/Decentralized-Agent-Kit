@@ -32,11 +32,15 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "maintenance/uv.lock"
       - name: AWS credentials for Bedrock (OIDC)
+        id: aws
         if: ${{ vars.MAINT_AWS_ROLE_ARN != '' }}
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.MAINT_AWS_ROLE_ARN }}
           aws-region: ${{ vars.MAINT_AWS_REGION || 'us-east-1' }}
+          # Only the step that calls the LLM gets them (not uv sync, not issue creation).
+          output-credentials: true
+          output-env-credentials: false
 
       - name: Collect recently updated deps
         working-directory: maintenance
@@ -56,6 +60,11 @@ jobs:
 
       - name: Generate proposals
         working-directory: maintenance
+        env:
+          AWS_ACCESS_KEY_ID: ${{ steps.aws.outputs.aws-access-key-id }}
+          AWS_SECRET_ACCESS_KEY: ${{ steps.aws.outputs.aws-secret-access-key }}
+          AWS_SESSION_TOKEN: ${{ steps.aws.outputs.aws-session-token }}
+          AWS_REGION: ${{ vars.MAINT_AWS_REGION || 'us-east-1' }}
         run: |
           existing=$(gh issue list --label feature-sync --state open --json title --jq '[.[].title | sub("^要望: *"; "")]')  # 起票時に付ける「要望: 」を外して比べる
           uv run dak-maint feature-sync \
