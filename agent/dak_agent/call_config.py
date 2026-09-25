@@ -16,11 +16,18 @@ from jsonschema_specifications import REGISTRY as METASCHEMAS
 DAK_PREFIX = "dak:"
 STATE_CALL_INSTRUCTION = "dak:instruction"
 STATE_CALL_OUTPUT_SCHEMA = "dak:output_schema"  # JSON Schema (dict)
-# Tools for this call. A list of names: only those built-in tools and those
-# names from the default MCP server; [] means no tools at all.
+# Tools for this call. A list of names (or {"names": [...]}): only those
+# built-in tools and those names from the default MCP server; [] means no tools
+# at all. {"mcp_servers": [{"url", "type": "http"|"sse"}], "names"?: [...]}:
+# only the tools of the caller's MCP servers (optionally filtered by name).
 STATE_CALL_TOOLS = "dak:tools"
-STATE_CALL_MODEL = "dak:model"
-TRANSFER_TOOL = "transfer_to_agent"  # ADK's A2A delegation tool (from sub_agents)  # LiteLLM model id, e.g. "bedrock/openai.gpt-5.6-luna"
+# Operator's allow-list for the caller's MCP servers (comma-separated URLs).
+# Unset means no caller may pass one: connecting to caller-chosen URLs from the
+# agent container would otherwise reach the operator's internal network.
+ALLOWED_MCP_URLS_ENV = "DAK_ALLOWED_MCP_URLS"
+MCP_CONNECTION_TYPES = ("http", "sse")
+TRANSFER_TOOL = "transfer_to_agent"  # ADK's A2A delegation tool (from sub_agents)
+STATE_CALL_MODEL = "dak:model"  # LiteLLM model id, e.g. "bedrock/openai.gpt-5.6-luna"
 # Operator's allow-list for `dak:model` (comma-separated model ids). Unset
 # means no caller may pick a model: callers cannot exceed the operator's
 # cost limits unless the operator opens that door explicitly.
@@ -122,10 +129,67 @@ def validate_call_output(schema: Dict[str, Any], text: str) -> Tuple[Optional[An
     return parsed, []
 
 
+def call_tool_names(value: Any) -> Optional[List[str]]:
+    """The names in `dak:tools` (list form, or the dict's "names"); None when
+    the dict form gives none."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, Mapping):
+        return value.get("names")
+    return None
+
+
 def validate_call_tools(call_settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """An error dict when `dak:tools` is present but not a list of tool names.
-    A caller who asked for a restriction must not silently get every tool."""
+    """An error dict when `dak:tools` is present but malformed, or names MCP
+    servers the operator does not allow. A caller who asked for a restriction
+    must not silently get every tool."""
     value = call_settings.get(STATE_CALL_TOOLS)
-    if value is None or (isinstance(value, list) and all(isinstance(n, str) for n in value)):
+    if value is None:
         return None
-    return {"error": "invalid_tools", "expected": 'a list of tool names, e.g. ["read_file"]; [] for no tools'}
+    names = call_tool_names(value)
+    shape_ok = (
+        (isinstance(value, list) or (isinstance(value, Mapping) and value and set(value) <= {"names", "mcp_servers"}))
+        and (names is None or (isinstance(names, list) and all(isinstance(n, str) for n in names)))
+    )
+    if not shape_ok:
+        return {"error": "invalid_tools",
+                "expected": 'a list of tool names, e.g. ["read_file"] ([] for no tools), '
+                            'or {"mcp_servers": [{"url": "...", "type": "http"|"sse"}], "names"?: [...]}'}
+    return resolve_caller_mcp_servers(call_settings)[1]
+
+
+def resolve_caller_mcp_servers(
+    call_settings: Dict[str, Any],
+) -> Tuple[Optional[List[Dict[str, str]]], Optional[Dict[str, Any]]]:
+    """The caller's MCP servers from `dak:tools` ({"mcp_servers": [...]}),
+    normalized to [{"url", "type"}], or an error dict when they are malformed
+    or not in the operator's allow-list (the call must then not reach any
+    LLM). (None, None) when the call does not name MCP servers."""
+    value = call_settings.get(STATE_CALL_TOOLS)
+    if not isinstance(value, Mapping) or "mcp_servers" not in value:
+        return None, None
+    entries = value.get("mcp_servers")
+    servers = []
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, Mapping) or not isinstance(entry.get("url"), str):
+                break
+            conn_type = entry.get("type", "http")
+            if conn_type not in MCP_CONNECTION_TYPES:
+                break
+            server = {"url": entry["url"].strip(), "type": conn_type}
+            if server not in servers:
+                servers.append(server)
+        else:
+            entries = None  # all valid
+    if entries is not None:
+        return None, {"error": "invalid_mcp_servers",
+                      "expected": '{"mcp_servers": [{"url": "...", "type": "http"|"sse"}]}'}
+
+    raw = os.environ.get(ALLOWED_MCP_URLS_ENV)
+    allowed = frozenset(u.strip() for u in (raw or "").split(",") if u.strip())
+    refused = [s["url"] for s in servers if s["url"] not in allowed]
+    if refused:
+        return None, {"error": "mcp_server_not_allowed", "requested_urls": refused,
+                      "allowed_urls": sorted(allowed)}
+    return servers, None

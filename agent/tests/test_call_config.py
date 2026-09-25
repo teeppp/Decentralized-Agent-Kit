@@ -165,3 +165,48 @@ def test_resolve_model_selection_rejects_non_string_model(monkeypatch):
 
     assert model == "default-model"
     assert error["error"] == "model_not_allowed"
+
+
+def test_caller_mcp_servers_are_refused_when_allow_list_unset(monkeypatch):
+    monkeypatch.delenv("DAK_ALLOWED_MCP_URLS", raising=False)
+
+    servers, error = call_config.resolve_caller_mcp_servers(
+        {"dak:tools": {"mcp_servers": [{"url": "http://caller:9000/mcp"}]}})
+
+    assert servers is None
+    assert error == {"error": "mcp_server_not_allowed", "requested_urls": ["http://caller:9000/mcp"],
+                     "allowed_urls": []}
+
+
+def test_caller_mcp_servers_are_accepted_when_allowed(monkeypatch):
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", "http://caller:9000/mcp, http://other/mcp")
+
+    servers, error = call_config.resolve_caller_mcp_servers(
+        {"dak:tools": {"mcp_servers": [{"url": "http://caller:9000/mcp", "type": "sse"}, {"url": "http://other/mcp"}]}})
+
+    assert error is None
+    assert servers == [{"url": "http://caller:9000/mcp", "type": "sse"}, {"url": "http://other/mcp", "type": "http"}]
+
+
+def test_caller_mcp_servers_refuse_the_whole_call_if_any_url_is_not_allowed(monkeypatch):
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", "http://caller:9000/mcp")
+
+    servers, error = call_config.resolve_caller_mcp_servers(
+        {"dak:tools": {"mcp_servers": [{"url": "http://caller:9000/mcp"}, {"url": "http://169.254.169.254/"}]}})
+
+    assert servers is None
+    assert error["requested_urls"] == ["http://169.254.169.254/"]
+
+
+def test_malformed_caller_mcp_servers_are_refused(monkeypatch):
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", "http://caller:9000/mcp")
+    for bad in ({"mcp_servers": "http://caller:9000/mcp"}, {"mcp_servers": [{"url": "http://caller:9000/mcp", "type": "ws"}]},
+                {"mcp_servers": [{"nourl": 1}]}):
+        servers, error = call_config.resolve_caller_mcp_servers({"dak:tools": bad})
+        assert servers is None and error["error"] == "invalid_mcp_servers", bad
+
+
+def test_no_caller_mcp_servers_is_neither_servers_nor_error():
+    assert call_config.resolve_caller_mcp_servers({}) == (None, None)
+    assert call_config.resolve_caller_mcp_servers({"dak:tools": ["a"]}) == (None, None)
+    assert call_config.resolve_caller_mcp_servers({"dak:tools": {"names": ["a"]}}) == (None, None)

@@ -4,7 +4,8 @@ import json
 
 import httpx
 
-from conftest import AGENT_RUN_TIMEOUT, AGENT_URL, APP_NAME, FAKE_LLM_URL, event_texts
+from conftest import (AGENT_RUN_TIMEOUT, AGENT_URL, APP_NAME, FAKE_LLM_URL, event_texts, function_calls,
+                      function_responses)
 
 MODEL = "fake-default"
 ALT_MODEL = "fake-alt"  # allowed by DAK_ALLOWED_MODELS in docker-compose.test.yml
@@ -92,3 +93,34 @@ def test_call_model_rejected_when_not_in_allow_list(agent, fake_llm):
     assert errors[-1]["allowed_models"] == ["openai/fake-alt", "openai/fake-default"]
     # No LLM was called at all.
     assert {m: _llm_requests(m) for m in before} == before
+
+
+# Inside the compose network; allowed by DAK_ALLOWED_MCP_URLS in docker-compose.test.yml.
+CALLER_MCP = "http://mcp-server:8000/mcp"
+
+
+def test_caller_mcp_tool_runs_without_a_confirmation_request(agent, fake_llm):
+    fake_llm.clear(MODEL)
+    fake_llm.script(MODEL, [fake_llm.tool_call("read_file", path="README.md"), fake_llm.text("read it")])
+
+    events = _run(agent, agent.create_session(), "read the README",
+                  {"dak:tools": {"mcp_servers": [{"url": CALLER_MCP, "type": "http"}]}})
+
+    calls = [c["name"] for c in function_calls(events)]
+    assert "read_file" in calls
+    assert "adk_request_confirmation" not in calls
+    read = next(r for r in function_responses(events) if r.get("name") == "read_file")
+    assert "Decentralized Agent Kit" in str(read.get("response", {}))
+    assert any("read it" in t for t in event_texts(events))
+
+
+def test_caller_mcp_not_in_the_allow_list_is_refused(agent, fake_llm):
+    fake_llm.clear(MODEL)
+    before = _llm_requests(MODEL)
+
+    events = _run(agent, agent.create_session(), "hi",
+                  {"dak:tools": {"mcp_servers": [{"url": "http://not-allowed:9000/mcp"}]}})
+
+    errors = [json.loads(t) for t in event_texts(events) if "mcp_server_not_allowed" in t]
+    assert errors and errors[-1]["requested_urls"] == ["http://not-allowed:9000/mcp"]
+    assert _llm_requests(MODEL) == before  # no LLM call

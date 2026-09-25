@@ -454,7 +454,9 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
 
         agent = AdaptiveAgent(model="test-model", name="test_agent", instruction="x", tools=[],
                               sub_agents=[LlmAgent(name="peer", model="test-model")])
-        for call_tools, expected in (([], []), (["transfer_to_agent"], ["peer"])):
+        for call_tools, expected in (([], []), (["transfer_to_agent"], ["peer"]),
+                                     ({"names": ["transfer_to_agent"]}, ["peer"]),
+                                     ({"mcp_servers": []}, [])):
             live = agent.model_copy()
             context = MagicMock()
             context.state = {}

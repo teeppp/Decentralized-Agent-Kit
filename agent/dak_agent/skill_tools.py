@@ -12,6 +12,7 @@ from typing import Iterable, List, Optional, Tuple
 
 from google.adk.tools import FunctionTool
 from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
+import httpx
 
 from . import call_config
 
@@ -99,17 +100,28 @@ def load_local_tools_from_skill(
     return local_tools, mcp_fallback
 
 
+def _no_redirect_http_client(headers=None, timeout=None, auth=None) -> httpx.AsyncClient:
+    """Like the MCP SDK's default client (30 s, 300 s to read a stream), but
+    refusing HTTP redirects."""
+    return httpx.AsyncClient(headers=headers, auth=auth, follow_redirects=False,
+                             timeout=timeout or httpx.Timeout(30.0, read=300.0))
+
+
 def make_mcp_toolset(
     url: str,
     conn_type: str = "http",
     tool_filter: Optional[List[str]] = None,
+    follow_redirects: bool = True,
 ) -> McpToolset:
-    """Create an McpToolset for the given server URL and connection type."""
+    """Create an McpToolset for the given server URL and connection type.
+    `follow_redirects=False` for servers the caller chose: an allowed endpoint
+    must not be able to send the agent on to another (internal) address."""
+    extra = {} if follow_redirects else {"httpx_client_factory": _no_redirect_http_client}
     if conn_type == "sse":
         from google.adk.tools.mcp_tool import SseConnectionParams
-        conn_params = SseConnectionParams(url=url)
+        conn_params = SseConnectionParams(url=url, **extra)
     else:
-        conn_params = StreamableHTTPConnectionParams(url=url)
+        conn_params = StreamableHTTPConnectionParams(url=url, **extra)
     return McpToolset(
         connection_params=conn_params,
         tool_filter=tool_filter,

@@ -106,3 +106,110 @@ async def test_malformed_call_tools_is_refused_without_calling_the_llm(bad):
 
     assert requests == []
     assert json.loads(texts[-1])["error"] == "invalid_tools"
+
+
+CALLER_MCP = "http://caller-mcp:9000/mcp"
+
+
+def test_call_tools_mcp_servers_replaces_default_toolset(monkeypatch):
+    from google.adk.tools import FunctionTool
+
+    from dak_agent.adaptive_agent import AdaptiveAgent
+    from dak_agent.builtin_tools import switch_mode
+
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", CALLER_MCP)
+    default_mcp = MagicMock()
+    type(default_mcp).__name__ = "McpToolset"
+    agent = AdaptiveAgent(model="m", name="dak_agent", instruction="x", tools=[FunctionTool(switch_mode), default_mcp])
+
+    with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=lambda *a, **k: ("toolset", *a)) as make:
+        tools = agent._resolve_session_tools(
+            {"dak_active_skills": ["anything"]},
+            {"dak:tools": {"mcp_servers": [{"url": CALLER_MCP, "type": "http"}], "names": ["read_file"]}})
+
+    assert tools == [("toolset", CALLER_MCP, "http", ["read_file"])]  # no built-ins, no default MCP
+    make.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_caller_mcp_not_allowed_is_refused_without_calling_the_llm(monkeypatch):
+    import json
+
+    from google.adk.artifacts import InMemoryArtifactService
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", CALLER_MCP)
+    llm, requests = _recording_llm()
+    app = _app(llm)
+    sessions = InMemorySessionService()
+    session = await sessions.create_session(app_name="dak_agent", user_id="u")
+    runner = Runner(app=app, session_service=sessions, artifact_service=InMemoryArtifactService())
+
+    texts = []
+    async for event in runner.run_async(
+        user_id="u", session_id=session.id,
+        new_message=types.Content(role="user", parts=[types.Part(text="hi")]),
+        state_delta={"dak:tools": {"mcp_servers": [{"url": "http://169.254.169.254/latest"}]}},
+    ):
+        texts += [p.text for p in (event.content.parts if event.content else []) if p.text]
+
+    assert requests == []
+    error = json.loads(texts[-1])
+    assert error["error"] == "mcp_server_not_allowed"
+    assert error["requested_urls"] == ["http://169.254.169.254/latest"]
+
+
+@pytest.mark.asyncio
+async def test_names_dict_form_is_the_same_as_a_list():
+    assert await _declared_tools({"dak:tools": {"names": ["switch_mode"]}}) == ["switch_mode"]
+
+
+def test_caller_mcp_with_empty_names_means_no_tools(monkeypatch):
+    from dak_agent.adaptive_agent import AdaptiveAgent
+
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", CALLER_MCP)
+    agent = AdaptiveAgent(model="m", name="dak_agent", instruction="x", tools=[])
+    with patch("dak_agent.skill_tools.make_mcp_toolset") as make:
+        tools = agent._resolve_session_tools({}, {"dak:tools": {"mcp_servers": [{"url": CALLER_MCP}], "names": []}})
+    assert tools == []
+    make.assert_not_called()
+
+
+def test_duplicate_caller_mcp_servers_are_used_once(monkeypatch):
+    from dak_agent import call_config
+
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", CALLER_MCP)
+    servers, _ = call_config.resolve_caller_mcp_servers(
+        {"dak:tools": {"mcp_servers": [{"url": CALLER_MCP}, {"url": CALLER_MCP, "type": "http"}]}})
+    assert servers == [{"url": CALLER_MCP, "type": "http"}]
+
+
+def test_caller_mcp_toolsets_do_not_follow_redirects(monkeypatch):
+    """An allowed endpoint must not be able to redirect the agent to an
+    internal address (the MCP SDK's client follows redirects by default)."""
+    from dak_agent import skill_tools
+
+    caller = skill_tools.make_mcp_toolset(CALLER_MCP, "http", None, follow_redirects=False)
+    default = skill_tools.make_mcp_toolset(CALLER_MCP, "http", None)
+    for conn_type in ("http", "sse"):
+        params = skill_tools.make_mcp_toolset(CALLER_MCP, conn_type, None, follow_redirects=False)._connection_params
+        assert params.httpx_client_factory().follow_redirects is False
+    assert caller._connection_params.httpx_client_factory().follow_redirects is False
+    assert default._connection_params.httpx_client_factory().follow_redirects is True
+
+
+@pytest.mark.asyncio
+async def test_caller_mcp_form_does_not_list_the_default_mcp_tools(monkeypatch):
+    from dak_agent.adaptive_agent import AdaptiveAgent
+
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", CALLER_MCP)
+    agent = AdaptiveAgent(model="m", name="dak_agent", instruction="x", tools=[])
+    context = MagicMock()
+    context.state = {}
+    context._invocation_context.agent = agent.model_copy()
+    with patch("dak_agent.call_config.resolve_dak_settings",
+               return_value={"dak:tools": {"mcp_servers": [{"url": CALLER_MCP}]}}), \
+            patch.object(AdaptiveAgent, "ensure_remote_tools_loaded", AsyncMock()) as ensure:
+        await agent._restore_session_config(context)
+    ensure.assert_not_called()

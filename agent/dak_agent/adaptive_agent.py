@@ -2,7 +2,7 @@
 import json
 import logging
 import os
-from typing import Any, Dict, List, MutableMapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, MutableMapping, Optional, Tuple
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
@@ -215,9 +215,21 @@ class AdaptiveAgent(LlmAgent):
         """Rebuild this session's tool list from its state. A per-call
         `dak:tools` (list of names) replaces it: only those built-in tools,
         plus those names from the default MCP server."""
-        tool_names = call_settings.get(call_config.STATE_CALL_TOOLS)
-        if isinstance(tool_names, list):
-            return self._select_tools_by_name(tool_names)
+        call_tools = call_settings.get(call_config.STATE_CALL_TOOLS)
+        if isinstance(call_tools, list):
+            return self._select_tools_by_name(call_tools)
+        if isinstance(call_tools, Mapping):
+            if "mcp_servers" not in call_tools:
+                return self._select_tools_by_name(list(call_tools.get("names") or []))
+            servers, _ = call_config.resolve_caller_mcp_servers(call_settings)
+            names = call_tools.get("names")
+            if names is not None and not names:
+                return []  # "names": [] means no tools, as the list form does
+            # Only the caller's servers; none of ours. A refused or malformed
+            # entry yields no tools (the call is also refused before any model
+            # call by `_restore_session_config`).
+            return [self._cached_mcp_toolset(s["url"], s["type"], names or (), follow_redirects=False)
+                    for s in servers or []]
 
         active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
         tools = list(self._builtin_tools)
@@ -286,16 +298,20 @@ class AdaptiveAgent(LlmAgent):
             tools.append(self._cached_mcp_toolset(self._mcp_url, "http", rest))
         return tools
 
-    def _cached_mcp_toolset(self, url: str, conn_type: str, names) -> Any:
+    def _cached_mcp_toolset(self, url: str, conn_type: str, names, follow_redirects: bool = True) -> Any:
         """One McpToolset per (server, tool filter), shared by every session.
         Each McpToolset owns an MCP session manager whose connection is only
         released by that same manager, so building a fresh one per turn would
         leak a connection per turn. The filter is never mutated after
-        creation, so sharing across sessions is safe."""
-        key = (url, conn_type, frozenset(names))
+        creation, so sharing across sessions is safe. Caller-chosen servers
+        get `follow_redirects=False` (a separate cache entry)."""
+        key = (url, conn_type, frozenset(names)) + (() if follow_redirects else ("no-redirects",))
         toolset = self._mcp_toolset_cache.get(key)
         if toolset is None:
-            toolset = skill_tools.make_mcp_toolset(url, conn_type, sorted(names) or None)
+            if follow_redirects:
+                toolset = skill_tools.make_mcp_toolset(url, conn_type, sorted(names) or None)
+            else:
+                toolset = skill_tools.make_mcp_toolset(url, conn_type, sorted(names) or None, follow_redirects=False)
             self._mcp_toolset_cache[key] = toolset
         return toolset
 
@@ -356,7 +372,7 @@ class AdaptiveAgent(LlmAgent):
         live.output_schema = call_settings.get(call_config.STATE_CALL_OUTPUT_SCHEMA)
         live.tools = [] if tools_error else self._resolve_session_tools(state, call_settings)
         call_tools = call_settings.get(call_config.STATE_CALL_TOOLS)
-        if isinstance(call_tools, list) and call_config.TRANSFER_TOOL not in call_tools:
+        if call_tools is not None and call_config.TRANSFER_TOOL not in (call_config.call_tool_names(call_tools) or []):
             # ADK adds transfer_to_agent from sub_agents on its own; drop the
             # A2A peers for this call unless the caller named that tool.
             live.sub_agents = []
@@ -378,7 +394,8 @@ class AdaptiveAgent(LlmAgent):
 
         Returning Content ends the invocation there, before any model call:
         used to refuse a `dak:model` the operator does not allow."""
-        if call_config.resolve_dak_settings(callback_context).get(call_config.STATE_CALL_TOOLS) is not None:
+        call_tools = call_config.resolve_dak_settings(callback_context).get(call_config.STATE_CALL_TOOLS)
+        if call_tools is not None and not (isinstance(call_tools, Mapping) and "mcp_servers" in call_tools):
             try:
                 await self.ensure_remote_tools_loaded()  # names for `dak:tools`
             except Exception as e:
@@ -387,7 +404,7 @@ class AdaptiveAgent(LlmAgent):
             error = self._apply_session_config(callback_context)
         except Exception as e:
             logger.error(f"CRITICAL ERROR restoring session config: {e}", exc_info=True)
-            # Still refuse a model the operator does not allow (fail closed).
+            # Still refuse what the operator does not allow (fail closed).
             call_settings = call_config.resolve_dak_settings(callback_context)
             _, error = call_config.resolve_model_selection(call_settings, self._base_model_name)
             error = error or call_config.validate_call_tools(call_settings)

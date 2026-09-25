@@ -22,6 +22,8 @@ services:
       - OPENAI_API_BASE=http://fake-llm:8080/v1
       - OPENAI_API_KEY=dummy
       - DAK_ALLOWED_MODELS=openai/fake-default,openai/fake-alt
+      # The stack's own mcp-server stands in for a caller's MCP server (dak:tools.mcp_servers).
+      - DAK_ALLOWED_MCP_URLS=http://mcp-server:8000/mcp
     depends_on:
       - postgres
       - fake-llm
