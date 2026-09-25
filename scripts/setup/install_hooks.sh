@@ -10,7 +10,10 @@ set -u
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root" || exit 2
 
-git config core.hooksPath .githooks
+if ! git config core.hooksPath .githooks; then
+  echo "NG  could not set core.hooksPath" >&2
+  exit 1
+fi
 for hook in .githooks/*; do
   [ -f "$hook" ] && chmod +x "$hook"
 done

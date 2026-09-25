@@ -86,7 +86,9 @@ def test_pre_push_stops_a_leak_on_a_new_branch(clone):
     (clone["dir"] / "b.txt").write_text(f"token={MARK}\n")
     clone["run"]("git", "add", "b.txt")
     clone["run"]("git", "commit", "-q", "--no-verify", "-m", "leak")
-    assert clone["run"]("git", "push", "-q", "origin", "feature").returncode != 0
+    result = clone["run"]("git", "push", "-q", "origin", "feature")
+    assert result.returncode != 0
+    assert "gitleaks found secrets" in result.stdout + result.stderr
 
 
 def test_pre_push_lets_clean_commits_and_branch_deletions_through(clone):
@@ -115,3 +117,36 @@ def test_real_gitleaks_in_pre_push_stops_a_langfuse_key(clone, env, branch):
     clone["run"]("git", "commit", "-q", "--no-verify", "-m", "leak")
     result = clone["run"]("git", "push", "-q", "origin", branch)
     assert result.returncode != 0, result.stdout + result.stderr
+
+
+def test_pre_push_stops_a_force_push_over_a_remote_commit_this_clone_never_fetched(clone, tmp_path):
+    """Machine A pushed; machine B did not fetch and force-pushes a leak. The
+    remote sha is unknown here, so its range cannot be resolved: scan what the
+    remote-tracking refs do not have instead of passing."""
+    clone["run"]("sh", "scripts/setup/install_hooks.sh")
+    other = tmp_path / "other"
+    env = clone["env"]
+    subprocess.run(["git", "clone", "-q", str(tmp_path / "remote.git"), str(other)], env=env, check=True)
+    (other / "a.txt").write_text("from machine A\n")
+    subprocess.run(["git", "commit", "-q", "-am", "A"], cwd=other, env=env, check=True)
+    subprocess.run(["git", "push", "-q", "--no-verify", "origin", "main"], cwd=other, env=env, check=True)
+
+    (clone["dir"] / "a.txt").write_text(f"token={MARK}\n")
+    clone["run"]("git", "commit", "-q", "--no-verify", "-am", "leak")
+    result = clone["run"]("git", "push", "-q", "--force", "origin", "main")
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "gitleaks found secrets" in result.stdout + result.stderr
+
+
+def test_pre_push_to_a_path_instead_of_a_remote_name_still_scans(clone, tmp_path):
+    clone["run"]("sh", "scripts/setup/install_hooks.sh")
+    target = tmp_path / "remote with space.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(tmp_path / "remote.git"), str(target)],
+                   env=clone["env"], check=True)
+    clone["run"]("git", "checkout", "-q", "-b", "feat")
+    (clone["dir"] / "b.txt").write_text(f"token={MARK}\n")
+    clone["run"]("git", "add", "b.txt")
+    clone["run"]("git", "commit", "-q", "--no-verify", "-m", "leak")
+    result = clone["run"]("git", "push", "-q", str(target), "feat")
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "gitleaks found secrets" in result.stdout + result.stderr
