@@ -129,3 +129,16 @@ def test_replanning_updates_pact(mock_context):
         create_llm_response(tool_name="read_file"), mock_context
     )
     assert blocked is not None
+
+
+def test_planner_restriction_does_not_block_write_todos_and_read_plan(mock_context):
+    """PBI #87: the plan's progress (write_todos/read_plan, state `dak_todos`)
+    is separate from the pact's tool restriction (planner, `enforcer_allowed_tools`)."""
+    mock_context.state[PLAN_KEY] = ["read_file"]
+
+    for tool_name, args in (("write_todos", {"items": [{"step": "a", "status": "done"}]}), ("read_plan", {})):
+        assert enforcer_validator(create_llm_response(tool_name=tool_name, tool_args=args), mock_context) is None
+
+    blocked = enforcer_validator(create_llm_response(tool_name="write_file", tool_args={"path": "x"}), mock_context)
+    assert ENFORCER_BLOCKED_MARKER in get_text_from_response(blocked)
+    assert mock_context.state[PLAN_KEY] == ["read_file"]  # recording progress does not touch the pact
