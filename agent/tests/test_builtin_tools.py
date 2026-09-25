@@ -110,6 +110,41 @@ class TestBuiltinTools(unittest.TestCase):
         self.assertIn("write_todos", ALWAYS_ALLOWED)
         self.assertIn("read_plan", ALWAYS_ALLOWED)
 
+    def test_write_todos_accepts_items_sent_as_a_json_string(self):
+        """Small models often send a nested array as a JSON string."""
+        tool_context = MagicMock()
+        tool_context.state = {}
+
+        write_todos('[{"step": "a", "status": "done"}]', tool_context)
+
+        self.assertEqual(tool_context.state[STATE_TODOS], [{"step": "a", "status": "done"}])
+
+    def test_write_todos_rejects_a_non_list_without_touching_the_saved_plan(self):
+        tool_context = MagicMock()
+        saved = [{"step": "keep me", "status": "in_progress"}]
+        for bad in ({"step": "a", "status": "done"}, "not json", '{"step": "a"}', 3):
+            tool_context.state = {STATE_TODOS: list(saved)}
+            result = write_todos(bad, tool_context)
+            self.assertTrue(result.startswith("Error:"), bad)
+            self.assertEqual(tool_context.state[STATE_TODOS], saved, bad)
+
+    def test_write_todos_normalizes_status_variants_and_plain_string_items(self):
+        tool_context = MagicMock()
+        tool_context.state = {}
+
+        write_todos([{"step": "a", "status": "DONE"}, {"step": "b", "status": "completed"},
+                     {"step": "c", "status": "in progress"}, "d"], tool_context)
+
+        self.assertEqual([i["status"] for i in tool_context.state[STATE_TODOS]],
+                         ["done", "done", "in_progress", "pending"])
+        self.assertEqual(tool_context.state[STATE_TODOS][3]["step"], "d")
+
+    def test_read_plan_tolerates_plan_state_not_written_by_write_todos(self):
+        """A client may seed `dak_todos` when creating the session."""
+        tool_context = MagicMock()
+        tool_context.state = {STATE_TODOS: [{"step": "x"}, "y"]}
+        self.assertEqual(read_plan(tool_context), "1. [pending] x\n2. [pending] y")
+
 
 if __name__ == "__main__":
     unittest.main()
