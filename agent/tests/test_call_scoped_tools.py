@@ -106,3 +106,60 @@ async def test_malformed_call_tools_is_refused_without_calling_the_llm(bad):
 
     assert requests == []
     assert json.loads(texts[-1])["error"] == "invalid_tools"
+
+
+CALLER_MCP = "http://caller-mcp:9000/mcp"
+
+
+def test_call_tools_mcp_servers_replaces_default_toolset(monkeypatch):
+    from google.adk.tools import FunctionTool
+
+    from dak_agent.adaptive_agent import AdaptiveAgent
+    from dak_agent.builtin_tools import switch_mode
+
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", CALLER_MCP)
+    default_mcp = MagicMock()
+    type(default_mcp).__name__ = "McpToolset"
+    agent = AdaptiveAgent(model="m", name="dak_agent", instruction="x", tools=[FunctionTool(switch_mode), default_mcp])
+
+    with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=lambda *a: ("toolset", *a)) as make:
+        tools = agent._resolve_session_tools(
+            {"dak_active_skills": ["anything"]},
+            {"dak:tools": {"mcp_servers": [{"url": CALLER_MCP, "type": "http"}], "names": ["read_file"]}})
+
+    assert tools == [("toolset", CALLER_MCP, "http", ["read_file"])]  # no built-ins, no default MCP
+    make.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_caller_mcp_not_allowed_is_refused_without_calling_the_llm(monkeypatch):
+    import json
+
+    from google.adk.artifacts import InMemoryArtifactService
+    from google.adk.runners import Runner
+    from google.adk.sessions import InMemorySessionService
+
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", CALLER_MCP)
+    llm, requests = _recording_llm()
+    app = _app(llm)
+    sessions = InMemorySessionService()
+    session = await sessions.create_session(app_name="dak_agent", user_id="u")
+    runner = Runner(app=app, session_service=sessions, artifact_service=InMemoryArtifactService())
+
+    texts = []
+    async for event in runner.run_async(
+        user_id="u", session_id=session.id,
+        new_message=types.Content(role="user", parts=[types.Part(text="hi")]),
+        state_delta={"dak:tools": {"mcp_servers": [{"url": "http://169.254.169.254/latest"}]}},
+    ):
+        texts += [p.text for p in (event.content.parts if event.content else []) if p.text]
+
+    assert requests == []
+    error = json.loads(texts[-1])
+    assert error["error"] == "mcp_server_not_allowed"
+    assert error["requested_urls"] == ["http://169.254.169.254/latest"]
+
+
+@pytest.mark.asyncio
+async def test_names_dict_form_is_the_same_as_a_list():
+    assert await _declared_tools({"dak:tools": {"names": ["switch_mode"]}}) == ["switch_mode"]

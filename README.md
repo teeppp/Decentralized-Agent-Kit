@@ -253,6 +253,10 @@ DAK_ALLOWED_MODELS=openai/gpt-5.6-luna,ollama/qwen3  # optional. Models a caller
                              # may pick per call with `dak:model`
                              # (docs/architecture/call_config.md). Unset = no
                              # caller may pick a model.
+DAK_ALLOWED_MCP_URLS=https://example.com/mcp  # optional. MCP servers a caller may
+                             # pass per call with `dak:tools.mcp_servers`
+                             # (docs/architecture/call_config.md). Unset = no
+                             # caller may pass one.
 
 # Enforcer Mode
 ENABLE_ENFORCER_MODE=true    # Enable strict ReAct pattern (Ulysses Pact)
