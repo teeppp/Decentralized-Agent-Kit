@@ -56,3 +56,14 @@
 - name: "area:cli"
   color: bfdadc
   description: cli コンポーネント
+
+# --- Backlog の階層（要望 → PBI → Task）---
+- name: "type:request"
+  color: d4c5f9
+  description: 採否未定の要望・自動提案（意図を変えずに整えた文で残す）
+- name: "type:pbi"
+  color: 0052cc
+  description: 利用者価値・検証条件・Story Points
+- name: "type:task"
+  color: 1d76db
+  description: PBIのsub-issue、1 Task = 1 PR

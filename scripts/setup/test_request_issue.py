@@ -1,4 +1,4 @@
-"""Tests for request_issue.py (run: `uv run --with pytest pytest scripts/setup -q`).
+"""Tests for request_issue.py (run: `uv run --no-project --with pytest pytest scripts/setup -q`).
 `gh` is replaced by a fake that records every call."""
 import importlib.util
 import json

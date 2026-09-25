@@ -43,6 +43,9 @@ jobs:
       - name: Run unit tests
         working-directory: ${{ matrix.component }}
         run: uv run pytest -q
+      - name: Run scripts/setup tests
+        if: matrix.component == 'maintenance'  # 保守の道具（request_issue.py など）
+        run: uv run --no-project --with pytest pytest scripts/setup -q
 
   integration:
     runs-on: ubuntu-latest

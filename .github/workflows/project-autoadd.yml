@@ -27,8 +27,36 @@ jobs:
     if: ${{ vars.DAK_PROJECT_URL != '' }}
     steps:
       - uses: actions/add-to-project@v2.0.0
+        id: add
         with:
           # bootstrap_project.sh が出力する Project URL を Variables に登録して使う。
           # 例: gh variable set DAK_PROJECT_URL --body "https://github.com/users/teeppp/projects/N"
           project-url: ${{ vars.DAK_PROJECT_URL }}
           github-token: ${{ secrets.DAK_PROJECT_TOKEN }}
+      # 新しい Issue の Status を Backlog にする（Status 未設定のときだけ。
+      # 既に整理済み・再オープンの Issue の Status は変えない）。
+      - name: Initialize new Issue status
+        if: ${{ github.event_name == 'issues' && steps.add.outputs.itemId != '' }}
+        uses: actions/github-script@v9
+        env:
+          PROJECT_ITEM_ID: ${{ steps.add.outputs.itemId }}
+        with:
+          github-token: ${{ secrets.DAK_PROJECT_TOKEN }}
+          script: |
+            const itemId = process.env.PROJECT_ITEM_ID;
+            const { node: item } = await github.graphql(`query($id: ID!) {
+              node(id: $id) { ... on ProjectV2Item {
+                fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+                project { id field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } }
+              } }
+            }`, { id: itemId });
+            if (item.fieldValueByName) return;
+            const field = item.project.field;
+            const backlog = field.options.find(option => option.name === 'Backlog');
+            if (!backlog) throw new Error('Project Status needs a Backlog option; run scripts/setup/bootstrap_project.sh');
+            await github.graphql(`mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $project, itemId: $item, fieldId: $field,
+                value: { singleSelectOptionId: $option }
+              }) { projectV2Item { id } }
+            }`, { project: item.project.id, item: itemId, field: field.id, option: backlog.id });
