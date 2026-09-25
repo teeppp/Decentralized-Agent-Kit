@@ -20,7 +20,8 @@ FAKE_GITLEAKS = f"""#!/bin/sh
 echo "$@" >> "$FAKE_GITLEAKS_LOG"
 case "$*" in
   *--staged*) git diff --cached | grep -q {MARK} && exit 1 ;;
-  *--log-opts=*) range=$(echo "$*" | sed 's/.*--log-opts=\\([^ ]*\\).*/\\1/'); git log -p "$range" | grep -q {MARK} && exit 1 ;;
+  # Like gitleaks: the --log-opts value is split on spaces and given to git log.
+  *--log-opts=*) opts=$(echo "$*" | sed 's/.*--log-opts=\\(.*\\) --config.*/\\1/'); git log -p $opts | grep -q {MARK} && exit 1 ;;
 esac
 exit 0
 """

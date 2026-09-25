@@ -60,7 +60,7 @@ fake-LLM はモデル名ごとに応答をスクリプトできる制御API（`/
 - 「System ENABLES, Agent DECIDES」— 暗黙の副作用（特に決済）を足さない。
 - 独立コンテナ/疎結合を壊さない（他コンポーネントの内部実装に依存しない）。
 - 鍵の値をファイル（スクリプト・テスト・ドキュメント）に書かない。実行中のコンテナや `.env` から値をコピーせず、環境変数から読む。
-  クローンしたら `git config core.hooksPath .githooks` で pre-commit（gitleaks）を有効にする。CI の `secrets` ジョブも全履歴を走査する。
+  クローンしたら `scripts/setup/install_hooks.sh` で pre-commit と pre-push（どちらも gitleaks）を有効にする。CI の `secrets` ジョブも全履歴を走査する。
   標準で検出されない鍵の形式は `.gitleaks.toml` にルールを足す。検出を `.gitleaksignore` で黙らせるのは、失効を確認した鍵だけ。
 - push 前・PR レビューでは、`docs/security/review-checklist.md` の「LLM が見る項目」を確かめる。検査の入口は `scripts/security/check.sh`（フック・gitleaks・範囲をまとめて確かめ、項目の一覧も出す）。
 - 変更にはテストを添える。コミットは Conventional Commits 風（`feat:`/`fix:`/`test:`/`deps:`）。
