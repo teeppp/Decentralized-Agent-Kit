@@ -145,6 +145,16 @@ class TestBuiltinTools(unittest.TestCase):
         tool_context.state = {STATE_TODOS: [{"step": "x"}, "y"]}
         self.assertEqual(read_plan(tool_context), "1. [pending] x\n2. [pending] y")
 
+    def test_write_todos_keeps_the_plan_when_the_instruction_refresh_fails(self):
+        tool_context = MagicMock()
+        tool_context.state = {}
+        tool_context._invocation_context.agent._apply_session_config.side_effect = RuntimeError("boom")
+
+        result = write_todos([{"step": "a", "status": "done"}], tool_context)
+
+        self.assertTrue(result.startswith("Plan saved"))
+        self.assertEqual(tool_context.state[STATE_TODOS], [{"step": "a", "status": "done"}])
+
 
 if __name__ == "__main__":
     unittest.main()

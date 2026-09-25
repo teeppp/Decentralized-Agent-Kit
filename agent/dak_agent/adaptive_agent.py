@@ -8,11 +8,12 @@ from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_response import LlmResponse
+from google.adk.utils import instructions_utils
 from google.genai import types
 from pydantic import ConfigDict, Field, PrivateAttr
 import inspect
 
-from . import call_config, remote_tools, skill_tools
+from . import builtin_tools, call_config, remote_tools, skill_tools
 from .config import get_litellm_model_name, load_agent_config
 from .errors import PaymentRequiredError
 from .handlers.payment_handler import PaymentHandler
@@ -195,7 +196,16 @@ class AdaptiveAgent(LlmAgent):
                     f"\n\n# Tool Enabled: {skill_name}\n"
                     f"You have enabled the raw tool '{skill_name}'. Use it according to its schema."
                 )
-        return instruction
+        return instruction + self._plan_section(state)
+
+    @staticmethod
+    def _plan_section(state: MutableMapping[str, Any]) -> str:
+        """The session's plan (`write_todos`), rebuilt from state every turn so
+        compaction of the event history never loses it."""
+        todos = state.get(builtin_tools.STATE_TODOS)
+        if not isinstance(todos, list) or not todos:
+            return ""
+        return f"\n\n# Current Plan\n{builtin_tools.format_todos(todos)}"
 
     def _resolve_session_tools(self, state: MutableMapping[str, Any]) -> List[Any]:
         """Rebuild this session's tool list from its state."""
@@ -297,11 +307,21 @@ class AdaptiveAgent(LlmAgent):
         call_settings = call_config.resolve_dak_settings(context)
         model_name, model_error = call_config.resolve_model_selection(call_settings, self._base_model_name)
         instruction = self._resolve_session_instruction(state, call_settings)
+        plan = self._plan_section(state)
         if call_settings.get(call_config.STATE_CALL_INSTRUCTION):
             # A provider (callable) makes ADK skip `{var}` session-state
             # injection, so the caller's text reaches the model verbatim
             # (`{date}` in it would otherwise fail the turn with a KeyError).
             live.instruction = lambda _ctx, text=instruction: text
+        elif plan:
+            # The plan is model-written text: keep it out of `{var}` injection
+            # (same KeyError), but still inject the operator's instruction.
+            templated = instruction[: -len(plan)]
+
+            async def with_plan(ctx, templated=templated, plan=plan):
+                return await instructions_utils.inject_session_state(templated, ctx) + plan
+
+            live.instruction = with_plan
         else:
             live.instruction = instruction
         # None (unspecified) keeps free-form text/tool-call responses. ADK puts
