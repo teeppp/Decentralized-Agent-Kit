@@ -33,6 +33,7 @@
    → 出力された URL を登録:
    - `gh variable set DAK_PROJECT_URL --body "<URL>"`
    - `gh secret set DAK_PROJECT_TOKEN --body "<project スコープ付き PAT>"`（`project-autoadd` と `scripts/setup/request_issue.py` が user-level Project に書くため、既定 `GITHUB_TOKEN` では不可）
+   - Project の設定で、Status の選択肢に `Backlog` を足す（新しい Project の既定は Todo / In Progress / Done だけ。新しい Issue と定期実行の要望は Status=Backlog で載るので、無いと失敗する）
 2. **バックログ投入**: `bash scripts/setup/seed_backlog.sh`（Phase 2-4 を Issue 化）
 3. **ラベル同期**: `labels.yml` を main に push（`labels.yml` ワークフローが反映）
 4. **リポジトリ設定**:

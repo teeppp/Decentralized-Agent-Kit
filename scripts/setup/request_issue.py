@@ -20,12 +20,18 @@ import subprocess
 import sys
 import tempfile
 
+# Same normalization as the workflows' dedupe: jq `sub("^要望: *"; "")`.
+REQUEST_PREFIX_RE = re.compile(r"^要望:\s*")
 PROJECT_URL_RE = re.compile(r"https://github\.com/(?:users|orgs)/([^/]+)/projects/(\d+)")
 
 
 def gh(args, env=None):
-    """Run `gh` and return stdout (tests replace this)."""
-    return subprocess.run(["gh", *args], check=True, text=True, capture_output=True, env=env).stdout
+    """Run `gh` and return stdout (tests replace this). A failure carries gh's
+    own message (missing label, missing `project` scope, ...) into the log."""
+    try:
+        return subprocess.run(["gh", *args], check=True, text=True, capture_output=True, env=env).stdout
+    except subprocess.CalledProcessError as e:
+        raise SystemExit(f"gh {' '.join(args[:2])} failed: {(e.stderr or e.stdout or '').strip()}") from None
 
 
 def request_body(body, source):
@@ -61,7 +67,8 @@ def add_to_backlog(issue_url, project_url, token):
     status = next((f for f in fields if f.get("name") == "Status"), None)
     backlog = next((o for o in (status or {}).get("options", []) if o.get("name") == "Backlog"), None)
     if not backlog:
-        raise SystemExit("The Project's Status field has no 'Backlog' option; run scripts/setup/bootstrap_project.sh")
+        raise SystemExit("The Project's Status field has no 'Backlog' option: add it in the Project's settings "
+                         "(Status field → Add option 'Backlog'; see docs/maintenance/README.md)")
     project_id = json.loads(gh(["project", "view", number, "--owner", owner, "--format", "json"], env))["id"]
     gh(["project", "item-edit", "--id", item_id, "--project-id", project_id,
         "--field-id", status["id"], "--single-select-option-id", backlog["id"]], env)
@@ -79,25 +86,32 @@ def main(argv=None):
     project_url = os.getenv("DAK_PROJECT_URL", "").strip()
     token = os.getenv("DAK_PROJECT_TOKEN", "").strip()
 
+    failures = 0
     for proposal in proposals:
-        title = proposal["title"].strip()
-        if not title.startswith("要望:"):
-            title = f"要望: {title}"
-        labels = [label for label in proposal.get("labels", []) if not label.startswith("type:")] + ["type:request"]
-        with tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False) as f:
-            f.write(request_body(proposal.get("body", ""), args.source))
         try:
-            issue_url = gh(["issue", "create", "--title", title, "--body-file", f.name,
-                            "--label", ",".join(labels)]).strip()
-        finally:
-            os.unlink(f.name)
-        print(issue_url, flush=True)
-        if not project_url:
-            continue
-        if not token:
-            raise SystemExit(f"{issue_url} was created, but DAK_PROJECT_TOKEN is missing: add it to the Project by hand")
-        add_to_backlog(issue_url, project_url, token)
-    return 0
+            file_request(proposal, args.source, project_url, token)
+        except SystemExit as e:  # keep filing the rest; report the run as failed at the end
+            failures += 1
+            print(f"error: {proposal.get('title', '?')}: {e}", file=sys.stderr)
+    return 1 if failures else 0
+
+
+def file_request(proposal, source, project_url, token):
+    title = "要望: " + REQUEST_PREFIX_RE.sub("", proposal["title"].strip())
+    labels = list(dict.fromkeys([*proposal.get("labels", []), "type:request"]))
+    with tempfile.NamedTemporaryFile("w", suffix=".md", encoding="utf-8", delete=False) as f:
+        f.write(request_body(proposal.get("body", ""), source))
+    try:
+        issue_url = gh(["issue", "create", "--title", title, "--body-file", f.name,
+                        "--label", ",".join(labels)]).strip()
+    finally:
+        os.unlink(f.name)
+    print(issue_url, flush=True)
+    if not project_url:
+        return
+    if not token:
+        raise SystemExit(f"{issue_url} was created, but DAK_PROJECT_TOKEN is missing: add it to the Project by hand")
+    add_to_backlog(issue_url, project_url, token)
 
 
 if __name__ == "__main__":

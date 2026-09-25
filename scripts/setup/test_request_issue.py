@@ -15,13 +15,21 @@ ISSUE_URL = "https://github.com/octo/repo/issues/42"
 
 
 class FakeGh:
-    def __init__(self):
+    def __init__(self, fail_on=None):
         self.calls = []  # (args, env GH_TOKEN)
+        self.bodies = []
+        self.fail_on = fail_on  # (subcommand, n-th call) that raises
+        self.created = 0
 
     def __call__(self, args, env=None):
         self.calls.append((args, (env or {}).get("GH_TOKEN")))
+        if self.fail_on and args[:2] == list(self.fail_on[:2]) and \
+                sum(1 for c, _ in self.calls if c[:2] == args[:2]) == self.fail_on[2]:
+            raise SystemExit(f"gh {' '.join(args[:2])} failed: HTTP 403 (missing project scope)")
         if args[:2] == ["issue", "create"]:
-            return ISSUE_URL + "\n"
+            self.created += 1
+            self.bodies.append(Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8"))
+            return f"{ISSUE_URL[:-2]}{41 + self.created}\n"
         if args[:2] == ["project", "item-add"]:
             return json.dumps({"id": "ITEM"})
         if args[:2] == ["project", "field-list"]:
@@ -41,7 +49,7 @@ def _proposals(tmp_path, items):
     return path
 
 
-PROPOSAL = {"title": "Adopt X", "body": "**新機能**: X を使う", "labels": ["feature-sync", "automation", "type:pbi"]}
+PROPOSAL = {"title": "Adopt X", "body": "**新機能**: X を使う", "labels": ["feature-sync", "automation"]}
 
 
 def test_proposal_becomes_a_request_issue_and_lands_in_the_backlog(tmp_path, monkeypatch):
@@ -56,8 +64,7 @@ def test_proposal_becomes_a_request_issue_and_lands_in_the_backlog(tmp_path, mon
     assert create[:2] == ["issue", "create"]
     assert create[create.index("--title") + 1] == "要望: Adopt X"
     assert create[create.index("--label") + 1] == "feature-sync,automation,type:request"
-    body = Path(create[create.index("--body-file") + 1])  # already deleted; content checked below
-    assert body.suffix == ".md"
+    assert gh.bodies[0].startswith("## 要望\n\n**新機能**: X を使う\n")
     add, fields, view, edit = (c for c in gh.calls[1:])
     assert add[0] == ["project", "item-add", "7", "--owner", "octo", "--url", ISSUE_URL, "--format", "json"]
     assert fields[0][:2] == ["project", "field-list"] and view[0][:2] == ["project", "view"]
@@ -77,27 +84,29 @@ def test_request_body_is_a_tidy_request_not_a_verbatim_quote():
         assert old not in body
 
 
-def test_title_that_already_says_request_is_not_prefixed_twice(tmp_path, monkeypatch):
+@pytest.mark.parametrize("title", ["要望: Adopt X", "要望:Adopt X", "要望:   Adopt X"])
+def test_title_that_already_says_request_is_normalized_not_prefixed_twice(tmp_path, monkeypatch, title):
+    """Same normalization as the workflows' dedupe (`sub("^要望: *"; "")`)."""
     gh = FakeGh()
     monkeypatch.setattr(request_issue, "gh", gh)
     monkeypatch.delenv("DAK_PROJECT_URL", raising=False)
 
-    request_issue.main([str(_proposals(tmp_path, [dict(PROPOSAL, title="要望: Adopt X")])), "--source", "x"])
+    request_issue.main([str(_proposals(tmp_path, [dict(PROPOSAL, title=title)])), "--source", "x"])
 
     create = gh.calls[0][0]
     assert create[create.index("--title") + 1] == "要望: Adopt X"
     assert len(gh.calls) == 1  # no Project configured: only the issue
 
 
-def test_project_configured_without_token_fails_after_creating_the_issue(tmp_path, monkeypatch):
+def test_project_configured_without_token_fails_after_creating_the_issue(tmp_path, monkeypatch, capsys):
     gh = FakeGh()
     monkeypatch.setattr(request_issue, "gh", gh)
     monkeypatch.setenv("DAK_PROJECT_URL", PROJECT_URL)
     monkeypatch.delenv("DAK_PROJECT_TOKEN", raising=False)
 
-    with pytest.raises(SystemExit, match="DAK_PROJECT_TOKEN"):
-        request_issue.main([str(_proposals(tmp_path, [PROPOSAL])), "--source", "x"])
+    assert request_issue.main([str(_proposals(tmp_path, [PROPOSAL])), "--source", "x"]) == 1
     assert [c[0][:2] for c in gh.calls] == [["issue", "create"]]
+    assert "DAK_PROJECT_TOKEN" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("text", ["", "[]"])
@@ -116,3 +125,48 @@ def test_org_project_url_is_understood():
     assert request_issue.parse_project_url("https://github.com/orgs/acme/projects/12") == ("acme", "12")
     with pytest.raises(SystemExit):
         request_issue.parse_project_url("https://example.com/not-a-project")
+
+
+def test_one_failure_does_not_stop_the_other_proposals(tmp_path, monkeypatch, capsys):
+    gh = FakeGh(fail_on=("project", "item-add", 1))
+    monkeypatch.setattr(request_issue, "gh", gh)
+    monkeypatch.setenv("DAK_PROJECT_URL", PROJECT_URL)
+    monkeypatch.setenv("DAK_PROJECT_TOKEN", "t")
+
+    rc = request_issue.main([str(_proposals(tmp_path, [PROPOSAL, dict(PROPOSAL, title="Adopt Y")])), "--source", "x"])
+
+    assert rc == 1  # the run is reported as failed...
+    assert gh.created == 2  # ...but the second proposal was still filed and added
+    assert sum(1 for c, _ in gh.calls if c[:2] == ["project", "item-edit"]) == 1
+    assert "missing project scope" in capsys.readouterr().err
+
+
+def test_gh_failure_shows_gh_stderr(monkeypatch):
+    import subprocess
+
+    def fail(*a, **k):
+        raise subprocess.CalledProcessError(1, ["gh"], output="", stderr="could not add label: 'type:request' not found")
+
+    monkeypatch.setattr(request_issue.subprocess, "run", fail)
+    with pytest.raises(SystemExit, match="'type:request' not found"):
+        request_issue.gh(["issue", "create"])
+
+
+def test_missing_backlog_option_says_how_to_add_it(tmp_path, monkeypatch, capsys):
+    gh = FakeGh()
+    real = gh.__call__
+
+    def no_backlog(args, env=None):
+        out = real(args, env)
+        if args[:2] == ["project", "field-list"]:
+            return json.dumps({"fields": [{"id": "F", "name": "Status", "options": [{"id": "o", "name": "Todo"}]}]})
+        return out
+
+    monkeypatch.setattr(request_issue, "gh", no_backlog)
+    monkeypatch.setenv("DAK_PROJECT_URL", PROJECT_URL)
+    monkeypatch.setenv("DAK_PROJECT_TOKEN", "t")
+
+    assert request_issue.main([str(_proposals(tmp_path, [PROPOSAL])), "--source", "x"]) == 1
+    err = capsys.readouterr().err
+    assert "Add option 'Backlog'" in err
+    assert "bootstrap_project.sh" not in err
