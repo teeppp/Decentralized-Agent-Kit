@@ -4,10 +4,13 @@ These tools are always available and are never removed by mode switching
 or skill filtering.
 """
 import json
+import logging
 import os
 from typing import List
 
 from google.adk.tools import FunctionTool
+
+logger = logging.getLogger(__name__)
 
 # Session-state key holding the agent's plan: [{"step": str, "status": str}].
 # Kept in state (not in the event history), so context compaction never
@@ -112,7 +115,23 @@ def write_todos(items: list[dict], tool_context) -> str:
                 "the saved plan was not changed.")
     todos = [_normalize_item(item) for item in items]
     tool_context.state[STATE_TODOS] = todos
+    _refresh_instruction(tool_context)
     return f"Plan saved:\n{format_todos(todos)}"
+
+
+def _refresh_instruction(tool_context) -> None:
+    """Rebuild the running agent's instruction now, so the new plan is in the
+    very next model call of this invocation (compaction happens inside long
+    invocations). Done here rather than in an after_tool callback: ADK skips
+    agent callbacks when a plugin (the context harness truncating a long
+    output) returns a replacement. Same as `enable_skill` does for skills."""
+    agent = getattr(getattr(tool_context, "_invocation_context", None), "agent", None)
+    refresh = getattr(agent, "_apply_session_config", None)
+    if callable(refresh):
+        try:
+            refresh(tool_context)
+        except Exception as e:  # the plan is saved; it reaches the model from the next turn
+            logger.error(f"Could not rebuild the instruction after write_todos: {e}", exc_info=True)
 
 
 def read_plan(tool_context) -> str:

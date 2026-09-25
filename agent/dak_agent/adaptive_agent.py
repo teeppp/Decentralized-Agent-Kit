@@ -82,7 +82,6 @@ class AdaptiveAgent(LlmAgent):
             "before_agent_callback": self._restore_session_config,
             "after_model_callback": self._wrapped_callback,
             "on_tool_error_callback": self._on_tool_error,
-            "after_tool_callback": self._after_tool,
         }
         if sub_agents:
             init_kwargs["sub_agents"] = sub_agents
@@ -204,7 +203,9 @@ class AdaptiveAgent(LlmAgent):
         """The session's plan (`write_todos`), rebuilt from state every turn so
         compaction of the event history never loses it."""
         todos = state.get(builtin_tools.STATE_TODOS)
-        return f"\n\n# Current Plan\n{builtin_tools.format_todos(todos)}" if todos else ""
+        if not isinstance(todos, list) or not todos:
+            return ""
+        return f"\n\n# Current Plan\n{builtin_tools.format_todos(todos)}"
 
     def _resolve_session_tools(self, state: MutableMapping[str, Any]) -> List[Any]:
         """Rebuild this session's tool list from its state."""
@@ -360,18 +361,6 @@ class AdaptiveAgent(LlmAgent):
         return None
 
     # --- Callbacks ---
-
-    def _after_tool(self, tool, args: dict, tool_context, tool_response) -> Optional[dict]:
-        """After write_todos, rebuild the instruction right away so the plan is
-        in the very next model call of this invocation (compaction happens
-        inside long invocations), not only from the next turn. Same as
-        `enable_skill` does for skills."""
-        if getattr(tool, "name", None) == "write_todos":
-            try:
-                self._apply_session_config(tool_context)
-            except Exception as e:
-                logger.error(f"Failed to apply the new plan to the instruction: {e}", exc_info=True)
-        return None
 
     def _on_tool_error(self, tool, args: dict, tool_context, error: Exception) -> Optional[dict]:
         """

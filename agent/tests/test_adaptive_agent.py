@@ -329,6 +329,25 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         """Compaction happens inside long invocations, so the plan must be in
         the instruction from the model call right after write_todos, not only
         from the next turn."""
+        requests = await self._plan_then_answer([{"step": "check", "status": "pending"}])
+
+        self.assertEqual(len(requests), 2)  # one invocation, two model calls
+        self.assertNotIn("# Current Plan", requests[0].config.system_instruction)
+        self.assertIn("1. [pending] check", requests[1].config.system_instruction)
+
+    async def test_long_plan_reaches_the_next_model_call_with_the_harness_plugin(self):
+        """Production installs ContextHarnessPlugin, whose after_tool_callback
+        replaces a long tool output; ADK then skips agent after_tool callbacks.
+        The refresh must not depend on them."""
+        from dak_agent.harness import ContextHarnessPlugin, HarnessSettings
+
+        plan = [{"step": f"step {i} " + "x" * 120, "status": "pending"} for i in range(20)]
+        plugin = ContextHarnessPlugin(HarnessSettings(context_window=8000), "test-model")  # 2,000-char cap
+        requests = await self._plan_then_answer(plan, plugins=[plugin])
+
+        self.assertIn("20. [pending] step 19", requests[1].config.system_instruction)
+
+    async def _plan_then_answer(self, plan, plugins=()):
         from google.adk.apps import App
         from google.adk.artifacts import InMemoryArtifactService
         from google.adk.models.base_llm import BaseLlm
@@ -347,7 +366,7 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
                 requests.append(llm_request)
                 if len(requests) == 1:
                     part = types.Part(function_call=types.FunctionCall(
-                        id="fc-1", name="write_todos", args={"items": [{"step": "check", "status": "pending"}]}))
+                        id="fc-1", name="write_todos", args={"items": plan}))
                 else:
                     part = types.Part(text="done")
                 yield LlmResponse(content=types.Content(role="model", parts=[part]))
@@ -356,8 +375,8 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
                               instruction="Base.", tools=[FunctionTool(write_todos)])
         sessions = InMemorySessionService()
         session = await sessions.create_session(app_name="dak_agent", user_id="u")
-        runner = Runner(app=App(name="dak_agent", root_agent=agent), session_service=sessions,
-                        artifact_service=InMemoryArtifactService())
+        runner = Runner(app=App(name="dak_agent", root_agent=agent, plugins=list(plugins)),
+                        session_service=sessions, artifact_service=InMemoryArtifactService())
 
         with patch("dak_agent.remote_tools.discover_remote_tools", return_value={}):
             async for _ in runner.run_async(
@@ -365,10 +384,16 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
                 new_message=types.Content(role="user", parts=[types.Part(text="hi")]),
             ):
                 pass
+        return requests
 
-        self.assertEqual(len(requests), 2)  # one invocation, two model calls
-        self.assertNotIn("# Current Plan", requests[0].config.system_instruction)
-        self.assertIn("1. [pending] check", requests[1].config.system_instruction)
+    def test_call_instruction_replaces_the_plan_too(self):
+        """`dak:instruction` makes the system prompt exactly the caller's text
+        (PBI #137), so the session plan is not appended to it."""
+        agent = AdaptiveAgent(model="test-model", name="test_agent",
+                              instruction="Initial instruction", tools=self.mock_tools)
+        state = {"dak_todos": [{"step": "read repo", "status": "done"}]}
+
+        self.assertEqual(agent._resolve_session_instruction(state, {"dak:instruction": "Only this."}), "Only this.")
 
 if __name__ == '__main__':
     unittest.main()
