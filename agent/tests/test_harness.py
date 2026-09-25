@@ -539,14 +539,20 @@ def _request_tokens(llm_request) -> int:
 THOUGHT_FRAGMENTS = ["考える。"] * 850
 
 
-def _make_fake_llm(tool_calls: int, thoughts: bool = False):
+PLAN = [{"step": "read repo", "status": "done"}, {"step": "write summary", "status": "pending"}]
+
+
+def _make_fake_llm(tool_calls: int, thoughts: bool = False, plan: bool = False):
     from google.adk.models.base_llm import BaseLlm
     from google.adk.models.llm_response import LlmResponse
 
     class ScriptedLlm(BaseLlm):
-        """Calls big_tool `tool_calls` times, then answers. Records request sizes."""
+        """Calls big_tool `tool_calls` times, then answers. Records request sizes.
+        With `plan`, the first step records a plan with write_todos."""
         steps: int = 0
         request_tokens: list = []
+        system_instructions: list = []
+        summaries_before_request: list = []
         summary_tokens: list = []
         summaries: int = 0
 
@@ -563,13 +569,18 @@ def _make_fake_llm(tool_calls: int, thoughts: bool = False):
                     text="User request: inspect logs. Progress: read logs.")]), usage_metadata=usage)
                 return
             self.request_tokens.append(tokens)
+            self.system_instructions.append(llm_request.config.system_instruction or "")
+            self.summaries_before_request.append(self.summaries)
             if not any(c.role == "user" and any(p.text for p in c.parts or []) for c in llm_request.contents):
                 # Mirrors llama.cpp's Qwen chat template (--jinja).
                 raise ValueError("Jinja Exception: No user query found in messages.")
             if tokens > WINDOW:
                 raise ValueError(f"the request exceeds the available context size ({tokens} > {WINDOW})")
             self.steps += 1
-            if self.steps <= tool_calls:
+            if plan and self.steps == 1:
+                part = types.Part(function_call=types.FunctionCall(
+                    id="fc-plan", name="write_todos", args={"items": PLAN}))
+            elif self.steps <= tool_calls + int(plan):
                 part = types.Part(function_call=types.FunctionCall(
                     id=f"fc-{self.steps}", name="big_tool", args={}))
             else:
@@ -580,7 +591,10 @@ def _make_fake_llm(tool_calls: int, thoughts: bool = False):
     return ScriptedLlm(model="scripted")
 
 
-async def _run(use_harness: bool, tool_calls: int = 6, thoughts: bool = False, adk_summarizer: bool = False):
+async def _run(use_harness: bool, tool_calls: int = 6, thoughts: bool = False, adk_summarizer: bool = False,
+               plan: bool = False):
+    """`plan`: run DAK's AdaptiveAgent (which injects the session's plan into
+    the instruction) with write_todos, instead of a bare LlmAgent."""
     from google.adk.agents import LlmAgent
     from google.adk.apps import App
     from google.adk.artifacts import InMemoryArtifactService
@@ -588,12 +602,19 @@ async def _run(use_harness: bool, tool_calls: int = 6, thoughts: bool = False, a
     from google.adk.sessions import InMemorySessionService
     from google.adk.tools import FunctionTool
 
-    llm = _make_fake_llm(tool_calls, thoughts=thoughts)
+    llm = _make_fake_llm(tool_calls, thoughts=thoughts, plan=plan)
     settings = HarnessSettings(context_window=WINDOW)
     tools = [FunctionTool(big_tool)]
     if use_harness:
         tools.append(make_read_tool_output_tool(settings.tool_output_chars))
-    agent = LlmAgent(name="dak_agent", model=llm, instruction="Inspect the logs.", tools=tools)
+    if plan:
+        from dak_agent.adaptive_agent import AdaptiveAgent
+        from dak_agent.builtin_tools import write_todos
+
+        tools.append(FunctionTool(write_todos))
+        agent = AdaptiveAgent(model=llm, name="dak_agent", instruction="Inspect the logs.", tools=tools)
+    else:
+        agent = LlmAgent(name="dak_agent", model=llm, instruction="Inspect the logs.", tools=tools)
     compaction = make_compaction_config(settings, llm=llm) if use_harness else None
     if compaction is not None and adk_summarizer:
         from google.adk.apps.llm_event_summarizer import LlmEventSummarizer
@@ -670,3 +691,39 @@ async def test_budgeted_summarizer_keeps_compaction_inside_the_window():
     assert llm.summaries >= 1
     assert max(llm.summary_tokens) <= WINDOW
     assert max(llm.request_tokens) <= WINDOW
+
+
+@pytest.mark.asyncio
+async def test_plan_survives_compaction():
+    """PBI #87: the plan recorded before compaction is still in the model's
+    request after the history was summarised (it lives in state, and the
+    instruction is rebuilt from state every turn)."""
+    with patch("dak_agent.remote_tools.discover_remote_tools", AsyncMock(return_value={})):
+        llm, session, final_text, error, _ = await _run(use_harness=True, plan=True)
+
+    assert error is None
+    assert final_text == "done"
+    # A compaction summarised the event that recorded the plan...
+    plan_event = next(e for e in session.events if e.content and any(
+        p.function_call and p.function_call.name == "write_todos" for p in e.content.parts or []))
+    assert any(e.actions.compaction.start_timestamp <= plan_event.timestamp <= e.actions.compaction.end_timestamp
+               for e in session.events if e.actions.compaction)
+    # ...before the final request, which still carries the plan.
+    assert llm.summaries_before_request[-1] >= 1
+    last_system = llm.system_instructions[-1]
+    assert "# Current Plan" in last_system
+    assert "[pending] write summary" in last_system
+    assert session.state["dak_todos"] == PLAN
+
+
+@pytest.mark.asyncio
+async def test_plan_state_is_not_lost_by_compaction_summary():
+    """Compaction replaces history with a summary event; it never writes state."""
+    with patch("dak_agent.remote_tools.discover_remote_tools", AsyncMock(return_value={})):
+        _, session, _, error, _ = await _run(use_harness=True, plan=True)
+
+    assert error is None
+    compaction_events = [e for e in session.events if e.actions.compaction]
+    assert compaction_events
+    assert all("dak_todos" not in (e.actions.state_delta or {}) for e in compaction_events)
+    assert session.state["dak_todos"] == PLAN

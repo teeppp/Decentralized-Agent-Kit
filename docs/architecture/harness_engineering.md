@@ -115,6 +115,13 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
   （例: `read_file` 14,947 → 4,915 文字）と invocation 内での圧縮が働くことを確認した。
 - 1 の不具合を再発させないため、`AdaptiveAgent` のテストは `session.events` を使う形に改めた。
 
+### 計画と進捗（`write_todos` / `read_plan`、#87）
+
+- 計画の各項目と進捗（`pending` / `in_progress` / `done`）はセッション state の `dak_todos` に置く。圧縮は履歴だけを要約に置き換え、state には触れないので、計画は残る。
+- 指示は state から組み直され、最後に `# Current Plan` として計画が入る。組み直すのは呼び出しの始めと、`write_todos` の直後。そのため、長い呼び出しの途中で書いた計画も、次のモデル呼び出しから見える。
+- `planner`（Ulysses Pact）は「これから使ってよいツール」を絞るもので、進捗は持たない。`write_todos` / `read_plan` は Pact で絞っていても常に呼べる。
+- 検証: `test_harness.py::test_plan_survives_compaction`（圧縮後の最後のリクエストに計画がある）、`test_ulysses_pact.py::test_planner_restriction_does_not_block_write_todos_and_read_plan`。
+
 ## 4. 残りのギャップとバックログ（優先度順）
 
 各項目は GitHub Issue 化して [DAK Project #7](https://github.com/users/teeppp/projects/7) で管理している。
@@ -127,7 +134,7 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
 |---|---|---|---|
 | P1 | **調査用サブエージェント（`AgentTool`）** | 「リポジトリを読んで要約」を子エージェントに任せ、親のコンテキストには結論だけを残す（Deep Agents の `task`、Claude Code の Explore 相当）。長い調査タスクで最も効く | #85 |
 | P1 | **内容検索ツール（grep）と行番号付き読み込み** | 今の `search_files` はファイル名しか検索できず、中身を探すにはファイル全体を読むしかない。`grep(pattern, path, glob)` と `edit_file`（文字列置換）を足すか、ADK `EnvironmentToolset` への移行を検討 | #86, #16, #20 |
-| P1 | **TODO ツール（セッション state に保存）** | `write_todos` 相当。圧縮後も計画が消えないよう state に置き、指示へ注入する。今の `planner` は `require_confirmation=True` のため、「計画を立てる」だけで毎回承認待ちになり、A2A や `/run` 経由の自律実行が止まる（実機で確認。本変更で承認は opt-in 化済み） | #87, #21 |
+| ~~P1~~ | ~~**TODO ツール（セッション state に保存）**~~ | **済み（#87）**: `write_todos` / `read_plan`。上の「計画と進捗」 | #87, #21 |
 | P2 | **コンテキスト超過からの回復** | 圧縮側は §5 で対応済み（要約は失敗しても例外を投げず、最悪でも抜粋で圧縮する）。残りはモデル呼び出し側: `on_model_error_callback` で `ContextWindowExceededError` を受けたら、強制圧縮して再試行するか、利用者に分かる形で失敗させる | #88 |
 | P2 | **窓サイズの自動検出** | llama-server の `/props`（`n_ctx`）から窓を取る。compose 既定の 8192 と実サーバーの 32768 のようなずれを防ぐ | #89 |
 | P2 | **`SkillToolset` への移行** | 独自の `SkillRegistry`/`enable_skill` を ADK 標準（Agent Skills 仕様・段階的開示・リソース読み込み）に寄せ、保守コストを下げる | #90, #81 |
