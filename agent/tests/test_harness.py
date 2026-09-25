@@ -552,6 +552,7 @@ def _make_fake_llm(tool_calls: int, thoughts: bool = False, plan: bool = False):
         steps: int = 0
         request_tokens: list = []
         system_instructions: list = []
+        summaries_before_request: list = []
         summary_tokens: list = []
         summaries: int = 0
 
@@ -569,6 +570,7 @@ def _make_fake_llm(tool_calls: int, thoughts: bool = False, plan: bool = False):
                 return
             self.request_tokens.append(tokens)
             self.system_instructions.append(llm_request.config.system_instruction or "")
+            self.summaries_before_request.append(self.summaries)
             if not any(c.role == "user" and any(p.text for p in c.parts or []) for c in llm_request.contents):
                 # Mirrors llama.cpp's Qwen chat template (--jinja).
                 raise ValueError("Jinja Exception: No user query found in messages.")
@@ -701,8 +703,13 @@ async def test_plan_survives_compaction():
 
     assert error is None
     assert final_text == "done"
-    compacted_at = next(i for i, e in enumerate(session.events) if e.actions.compaction)
-    assert compacted_at > 0 and llm.summaries >= 1
+    # A compaction summarised the event that recorded the plan...
+    plan_event = next(e for e in session.events if e.content and any(
+        p.function_call and p.function_call.name == "write_todos" for p in e.content.parts or []))
+    assert any(e.actions.compaction.start_timestamp <= plan_event.timestamp <= e.actions.compaction.end_timestamp
+               for e in session.events if e.actions.compaction)
+    # ...before the final request, which still carries the plan.
+    assert llm.summaries_before_request[-1] >= 1
     last_system = llm.system_instructions[-1]
     assert "# Current Plan" in last_system
     assert "[pending] write summary" in last_system
