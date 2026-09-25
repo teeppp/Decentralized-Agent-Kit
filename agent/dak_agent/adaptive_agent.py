@@ -24,8 +24,10 @@ from .skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
-# How long one caller MCP server may take to list its tools on a call.
-CALLER_MCP_PROBE_TIMEOUT_S = 10.0
+# Last-resort bound on listing one caller MCP server's tools. ADK's own
+# connection timeout (5 s, retried once) normally ends it first; cancelling
+# ADK mid-connection can orphan a session, so this stays well above that.
+CALLER_MCP_PROBE_TIMEOUT_S = 30.0
 # Per-invocation (ADK drops `temp:` state after the invocation): the tool names
 # each reachable caller MCP server listed on this call, {url: [names]}.
 STATE_CALLER_MCP_TOOLS = "temp:dak_caller_mcp_tools"
@@ -210,8 +212,10 @@ class AdaptiveAgent(LlmAgent):
     def _tools_error_section(state: MutableMapping[str, Any]) -> str:
         """Tell the model which of the caller's tools are unavailable on this
         call, so it can answer or try something else instead of failing."""
-        errors = state.get(call_config.STATE_TOOLS_ERROR) or []
-        if not errors:
+        errors = state.get(call_config.STATE_TOOLS_ERROR)
+        # DAK writes it, but a caller can also set any `dak:` key: ignore junk.
+        if not isinstance(errors, list) or not errors or not all(
+                isinstance(e, Mapping) and isinstance(e.get("url"), str) for e in errors):
             return ""
         lines = "\n".join(f"- {e.get('url')} ({e.get('reason')})" for e in errors)
         return f"\n\n# Unavailable tools\nThese tool servers could not be reached on this call:\n{lines}"
@@ -221,18 +225,20 @@ class AdaptiveAgent(LlmAgent):
         shared, cached toolset for the server (bounded by the operator's
         allow-list) rather than a new connection per call. An unreachable
         server is recorded in `dak:tools_error`; the turn goes on without it."""
-        listed: Dict[str, List[str]] = {}
-        errors = []
-        for server in servers:
+        async def probe(server):
             toolset = self._cached_mcp_toolset(server["url"], server["type"], (), follow_redirects=False)
             try:
                 tools = await asyncio.wait_for(toolset.get_tools(), timeout=CALLER_MCP_PROBE_TIMEOUT_S)
             except Exception as e:
                 reason = "timed out" if isinstance(e, asyncio.TimeoutError) else (str(e) or type(e).__name__)
                 logger.warning(f"Caller MCP server {server['url']} is unreachable: {reason}")
-                errors.append({"url": server["url"], "reason": f"unreachable: {reason}"[:300]})
-                continue
-            listed[server["url"]] = sorted({getattr(t, "name", "") for t in tools} - {""})
+                return server["url"], None, {"url": server["url"], "reason": f"unreachable: {reason}"[:300]}
+            return server["url"], sorted({getattr(t, "name", "") for t in tools} - {""}), None
+
+        # Concurrently: several servers that are down must not add up.
+        results = await asyncio.gather(*(probe(s) for s in servers))
+        listed = {url: names for url, names, _ in results if names is not None}
+        errors = [error for _, _, error in results if error]
         state[STATE_CALLER_MCP_TOOLS] = listed
         if errors or state.get(call_config.STATE_TOOLS_ERROR):
             state[call_config.STATE_TOOLS_ERROR] = errors or None
@@ -451,8 +457,12 @@ class AdaptiveAgent(LlmAgent):
             except Exception as e:
                 logger.warning(f"Could not list the default MCP tools: {e}")
         servers, _ = call_config.resolve_caller_mcp_servers(call_settings)
-        if servers:
+        refused = (call_config.resolve_model_selection(call_settings, self._base_model_name)[1]
+                   or call_config.validate_call_tools(call_settings))
+        if servers and not refused:  # no connections for a call that will be refused
             await self._probe_caller_mcp_servers(callback_context.state, servers)
+        elif callback_context.state.get(call_config.STATE_TOOLS_ERROR):
+            callback_context.state[call_config.STATE_TOOLS_ERROR] = None  # stale: not about this call
         try:
             error = self._apply_session_config(callback_context)
         except Exception as e:
