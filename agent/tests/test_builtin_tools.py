@@ -5,9 +5,12 @@ from unittest.mock import MagicMock, patch
 from dak_agent.builtin_tools import (
     ask_question,
     attempt_answer,
+    STATE_TODOS,
     make_builtin_tools,
     planner,
+    read_plan,
     switch_mode,
+    write_todos,
 )
 
 
@@ -15,12 +18,13 @@ class TestBuiltinTools(unittest.TestCase):
     def test_make_builtin_tools_default(self):
         tools = make_builtin_tools(enforcer_mode=False)
         names = [t.name for t in tools]
-        self.assertEqual(names, ["planner", "switch_mode"])
+        self.assertEqual(names, ["planner", "switch_mode", "write_todos", "read_plan"])
 
     def test_make_builtin_tools_enforcer(self):
         tools = make_builtin_tools(enforcer_mode=True)
         names = [t.name for t in tools]
-        self.assertEqual(names, ["planner", "switch_mode", "attempt_answer", "ask_question"])
+        self.assertEqual(
+            names, ["planner", "switch_mode", "write_todos", "read_plan", "attempt_answer", "ask_question"])
 
     def test_planner_does_not_block_on_confirmation_by_default(self):
         """A confirmation-gated planner stalls /run and A2A runs (no UI to approve)."""
@@ -63,6 +67,48 @@ class TestBuiltinTools(unittest.TestCase):
         self.assertTrue(tool_context._invocation_context.end_invocation)
         self.assertIn("What OS?", result)
         self.assertIn("Need environment info", result)
+
+
+    def test_write_todos_persists_state_and_normalizes_status(self):
+        tool_context = MagicMock()
+        tool_context.state = {}
+
+        result = write_todos(
+            [{"step": "read repo", "status": "done"},
+             {"step": "write summary", "status": "in_progress"},
+             {"step": "review", "status": "blocked"},  # unknown -> pending
+             {"step": "ship"}],                        # missing -> pending
+            tool_context,
+        )
+
+        self.assertEqual(tool_context.state[STATE_TODOS], [
+            {"step": "read repo", "status": "done"},
+            {"step": "write summary", "status": "in_progress"},
+            {"step": "review", "status": "pending"},
+            {"step": "ship", "status": "pending"},
+        ])
+        self.assertIn("[done] read repo", result)
+        self.assertIn("[pending] review", result)
+
+    def test_read_plan_returns_state(self):
+        tool_context = MagicMock()
+        tool_context.state = {}
+        self.assertEqual(read_plan(tool_context), "No plan recorded yet.")
+
+        write_todos([{"step": "read repo", "status": "done"}], tool_context)
+        self.assertEqual(read_plan(tool_context), "1. [done] read repo")
+
+    def test_make_builtin_tools_includes_write_todos_and_read_plan(self):
+        for enforcer_mode in (False, True):
+            names = [t.name for t in make_builtin_tools(enforcer_mode=enforcer_mode)]
+            self.assertIn("write_todos", names)
+            self.assertIn("read_plan", names)
+
+    def test_write_todos_and_read_plan_are_always_allowed_by_the_pact(self):
+        from dak_agent.enforcer import ALWAYS_ALLOWED
+
+        self.assertIn("write_todos", ALWAYS_ALLOWED)
+        self.assertIn("read_plan", ALWAYS_ALLOWED)
 
 
 if __name__ == "__main__":

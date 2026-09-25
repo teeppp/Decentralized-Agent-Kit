@@ -8,6 +8,12 @@ from typing import List
 
 from google.adk.tools import FunctionTool
 
+# Session-state key holding the agent's plan: [{"step": str, "status": str}].
+# Kept in state (not in the event history), so context compaction never
+# summarises it away.
+STATE_TODOS = "dak_todos"
+TODO_STATUSES = ("pending", "in_progress", "done")
+
 
 def attempt_answer(answer: str, confidence: str, sources_used: list[str], tool_context) -> str:
     """
@@ -62,6 +68,40 @@ def planner(task_description: str, plan_steps: list[str], allowed_tools: list[st
     return f"Plan recorded for '{task_description}':\n{plan_str}{restriction_msg}"
 
 
+def format_todos(items: list) -> str:
+    """One numbered line per plan item: `1. [done] read repo`."""
+    return "\n".join(f"{i + 1}. [{item['status']}] {item['step']}" for i, item in enumerate(items))
+
+
+def write_todos(items: list[dict], tool_context) -> str:
+    """
+    Record (or replace) your plan and the progress of each step. Call it again
+    whenever a step's status changes. The plan stays available after the
+    conversation history is compacted.
+    Args:
+        items: The whole plan, in order. Each item is {"step": "...", "status": "pending" | "in_progress" | "done"}.
+    """
+    todos = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            item = {"step": str(item)}
+        status = item.get("status")
+        todos.append({
+            "step": str(item.get("step", "")),
+            "status": status if status in TODO_STATUSES else "pending",
+        })
+    tool_context.state[STATE_TODOS] = todos
+    return f"Plan saved:\n{format_todos(todos)}"
+
+
+def read_plan(tool_context) -> str:
+    """
+    Read your current plan and the progress of each step (as saved by write_todos).
+    """
+    todos = tool_context.state.get(STATE_TODOS) or []
+    return format_todos(todos) if todos else "No plan recorded yet."
+
+
 def switch_mode(reason: str = "", new_focus: str = "") -> str:
     """
     Request a mode switch.
@@ -98,6 +138,8 @@ def make_builtin_tools(enforcer_mode: bool = False) -> List[FunctionTool]:
     tools = [
         FunctionTool(planner, require_confirmation=planner_requires_confirmation()),
         FunctionTool(switch_mode, require_confirmation=False),
+        FunctionTool(write_todos, require_confirmation=False),
+        FunctionTool(read_plan, require_confirmation=False),
     ]
     if enforcer_mode:
         tools.append(FunctionTool(attempt_answer, require_confirmation=False))
