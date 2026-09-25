@@ -11,6 +11,8 @@ on:
 
 permissions:
   contents: read
+  # MAINT_LLM_MODEL=bedrock/...: assume the Bedrock role over OIDC (IAM, no API key).
+  id-token: write
   issues: write
 
 jobs:
@@ -29,6 +31,12 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "maintenance/uv.lock"
+      - name: AWS credentials for Bedrock (OIDC)
+        if: ${{ vars.MAINT_AWS_ROLE_ARN != '' }}
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.MAINT_AWS_ROLE_ARN }}
+          aws-region: ${{ vars.MAINT_AWS_REGION || 'us-east-1' }}
 
       - name: Generate proposals
         working-directory: maintenance

@@ -13,6 +13,11 @@ Presets (set BASE_URL/MODEL accordingly):
   Ollama  http://localhost:11434/v1                                 llama3.2:3b        (any key)
   OpenAI  https://api.openai.com/v1                                 gpt-4o-mini        (OPENAI_API_KEY)
   Anthropic https://api.anthropic.com/v1                            claude-sonnet-5    (ANTHROPIC_API_KEY)
+
+Amazon Bedrock with IAM (no API key): MAINT_LLM_MODEL=bedrock/<model or
+inference profile id>, e.g. bedrock/global.openai.gpt-6-luna. Calls the
+Converse API with the environment's AWS credentials (in GitHub Actions: an
+OIDC-assumed role); region from AWS_REGION (default us-east-1).
 """
 
 from __future__ import annotations
@@ -22,10 +27,31 @@ import os
 import httpx
 
 
+BEDROCK_PREFIX = "bedrock/"
+
+
+def _make_bedrock_complete(model_id: str, timeout: float):
+    import boto3  # deferred: only the Bedrock path needs it
+    from botocore.config import Config
+
+    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    client = boto3.client("bedrock-runtime", region_name=region,
+                          config=Config(read_timeout=timeout, retries={"max_attempts": 3, "mode": "adaptive"}))
+
+    def complete(prompt: str) -> str:
+        resp = client.converse(modelId=model_id, messages=[{"role": "user", "content": [{"text": prompt}]}])
+        # Reasoning models also return reasoningContent blocks; the answer is the text.
+        return "".join(block.get("text", "") for block in resp["output"]["message"]["content"])
+
+    return complete
+
+
 def make_complete(timeout: float = 60.0):
     """Return a `complete(prompt) -> str`, or None if MAINT_LLM_* is not configured."""
     base_url = os.getenv("MAINT_LLM_BASE_URL")
     model = os.getenv("MAINT_LLM_MODEL")
+    if model and model.startswith(BEDROCK_PREFIX):
+        return _make_bedrock_complete(model[len(BEDROCK_PREFIX):], timeout)
     if not base_url or not model:
         return None
     api_key = os.getenv("MAINT_LLM_API_KEY", "not-needed")
