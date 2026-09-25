@@ -6,6 +6,7 @@ from dak_agent.builtin_tools import (
     ask_question,
     attempt_answer,
     STATE_TODOS,
+    format_todos,
     make_builtin_tools,
     planner,
     read_plan,
@@ -154,6 +155,42 @@ class TestBuiltinTools(unittest.TestCase):
 
         self.assertTrue(result.startswith("Plan saved"))
         self.assertEqual(tool_context.state[STATE_TODOS], [{"step": "a", "status": "done"}])
+
+    def test_format_todos_drops_done_steps_first_when_over_the_limit(self):
+        items = [{"step": f"old step {i}", "status": "done"} for i in range(30)] + [
+            {"step": "write summary", "status": "in_progress"}, {"step": "review", "status": "pending"}]
+
+        text = format_todos(items, max_chars=200)
+
+        self.assertLessEqual(len(text), 200)
+        self.assertTrue(text.startswith("(30 done steps omitted)"))
+        self.assertIn("31. [in_progress] write summary", text)  # original numbering
+        self.assertIn("32. [pending] review", text)
+
+    def test_format_todos_cuts_at_item_boundary_and_points_to_read_plan(self):
+        items = [{"step": f"step {i} " + "x" * 40, "status": "pending"} for i in range(50)]
+
+        text = format_todos(items, max_chars=300)
+
+        self.assertLessEqual(len(text), 300)
+        self.assertTrue(text.startswith("1. [pending] step 0 "))
+        shown = sum(1 for line in text.splitlines() if "[pending]" in line)
+        self.assertTrue(text.endswith(f"... {50 - shown} more steps. Call read_plan for the whole plan."))
+        self.assertTrue(all(line.endswith("x" * 40) for line in text.splitlines()[:-1]))  # no half items
+
+    def test_format_todos_without_limit_or_under_it_is_unchanged(self):
+        items = [{"step": "a", "status": "done"}, {"step": "b", "status": "pending"}]
+        self.assertEqual(format_todos(items, max_chars=1_000), format_todos(items))
+        self.assertEqual(format_todos(items), "1. [done] a\n2. [pending] b")
+
+    def test_read_plan_is_never_truncated(self):
+        tool_context = MagicMock()
+        tool_context.state = {STATE_TODOS: [{"step": f"s{i} " + "y" * 200, "status": "pending"} for i in range(200)]}
+
+        text = read_plan(tool_context)
+
+        self.assertEqual(len(text.splitlines()), 200)
+        self.assertNotIn("read_plan", text)
 
 
 if __name__ == "__main__":

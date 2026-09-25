@@ -395,5 +395,17 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(agent._resolve_session_instruction(state, {"dak:instruction": "Only this."}), "Only this.")
 
+    def test_plan_section_is_capped_by_the_window(self):
+        agent = AdaptiveAgent(model="test-model", name="test_agent",
+                              instruction="Initial instruction", tools=self.mock_tools)
+        agent._mode_manager.max_context_tokens = 8192  # plan_chars == 1,000
+        state = {"dak_todos": [{"step": f"step {i} " + "z" * 30, "status": "pending"} for i in range(200)]}
+
+        instruction = agent._resolve_session_instruction(state, {})
+
+        plan = instruction.split("# Current Plan\n", 1)[1]
+        self.assertLessEqual(len(plan), 1_000)
+        self.assertIn("Call read_plan for the whole plan.", plan)
+
 if __name__ == '__main__':
     unittest.main()
