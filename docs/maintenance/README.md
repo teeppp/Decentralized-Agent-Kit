@@ -25,7 +25,7 @@
 | `nightly-eval.yml` | nightly cron | 小型 Ollama で実LLMスモークを実行し pass-rate 記録 | 1 |
 | `capture-golden.yml` | 手動 / nightly | 実LLMセッションを決定論テスト化して PR 提案 | 1 |
 
-定期実行の提案は `scripts/setup/request_issue.py` が「要望: 」の題・`type:request` ラベルで起票し、Project に Status=Backlog で載せる（`GITHUB_TOKEN` で作った Issue は `project-autoadd` を起動しないため、スクリプトが `gh project` の CLI で自分で行う）。採否を検討して PBI にするのは人。テストは `uv run --no-project --with pytest pytest scripts/setup -q`（CI の maintenance ジョブでも走る）。
+定期実行の提案は `scripts/setup/request_issue.py` が「要望: 」の題・`type:request` ラベルで起票し、Project に Status=Backlog で載せる（`GITHUB_TOKEN` で作った Issue は `project-autoadd` を起動しないため、スクリプトが `gh project` の CLI で自分で行う）。採否を検討して PBI にするのは人。テストは `uv run --no-project --with pytest pytest scripts -q`（CI の maintenance ジョブでも走る）。
 
 ## 初期セットアップ（一度だけ）
 
