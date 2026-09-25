@@ -1,4 +1,5 @@
 """AdaptiveAgent: an LlmAgent with Dynamic Mode Switching and Agent Skills."""
+import asyncio
 import json
 import logging
 import os
@@ -22,6 +23,12 @@ from .mode_manager import ModeManager
 from .skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
+
+# How long one caller MCP server may take to list its tools on a call.
+CALLER_MCP_PROBE_TIMEOUT_S = 10.0
+# Per-invocation (ADK drops `temp:` state after the invocation): the tool names
+# each reachable caller MCP server listed on this call, {url: [names]}.
+STATE_CALLER_MCP_TOOLS = "temp:dak_caller_mcp_tools"
 
 
 class AdaptiveAgent(LlmAgent):
@@ -197,7 +204,38 @@ class AdaptiveAgent(LlmAgent):
                     f"\n\n# Tool Enabled: {skill_name}\n"
                     f"You have enabled the raw tool '{skill_name}'. Use it according to its schema."
                 )
-        return instruction + self._plan_section(state)
+        return instruction + self._tools_error_section(state) + self._plan_section(state)
+
+    @staticmethod
+    def _tools_error_section(state: MutableMapping[str, Any]) -> str:
+        """Tell the model which of the caller's tools are unavailable on this
+        call, so it can answer or try something else instead of failing."""
+        errors = state.get(call_config.STATE_TOOLS_ERROR) or []
+        if not errors:
+            return ""
+        lines = "\n".join(f"- {e.get('url')} ({e.get('reason')})" for e in errors)
+        return f"\n\n# Unavailable tools\nThese tool servers could not be reached on this call:\n{lines}"
+
+    async def _probe_caller_mcp_servers(self, state: MutableMapping[str, Any], servers: List[Dict[str, str]]) -> None:
+        """List the tools of each caller MCP server once per call. Uses the
+        shared, cached toolset for the server (bounded by the operator's
+        allow-list) rather than a new connection per call. An unreachable
+        server is recorded in `dak:tools_error`; the turn goes on without it."""
+        listed: Dict[str, List[str]] = {}
+        errors = []
+        for server in servers:
+            toolset = self._cached_mcp_toolset(server["url"], server["type"], (), follow_redirects=False)
+            try:
+                tools = await asyncio.wait_for(toolset.get_tools(), timeout=CALLER_MCP_PROBE_TIMEOUT_S)
+            except Exception as e:
+                reason = "timed out" if isinstance(e, asyncio.TimeoutError) else (str(e) or type(e).__name__)
+                logger.warning(f"Caller MCP server {server['url']} is unreachable: {reason}")
+                errors.append({"url": server["url"], "reason": f"unreachable: {reason}"[:300]})
+                continue
+            listed[server["url"]] = sorted({getattr(t, "name", "") for t in tools} - {""})
+        state[STATE_CALLER_MCP_TOOLS] = listed
+        if errors or state.get(call_config.STATE_TOOLS_ERROR):
+            state[call_config.STATE_TOOLS_ERROR] = errors or None
 
     def _plan_section(self, state: MutableMapping[str, Any]) -> str:
         """The session's plan (`write_todos`), rebuilt from state every turn so
@@ -225,11 +263,22 @@ class AdaptiveAgent(LlmAgent):
             names = call_tools.get("names")
             if names is not None and not names:
                 return []  # "names": [] means no tools, as the list form does
-            # Only the caller's servers; none of ours. A refused or malformed
-            # entry yields no tools (the call is also refused before any model
-            # call by `_restore_session_config`).
-            return [self._cached_mcp_toolset(s["url"], s["type"], names or (), follow_redirects=False)
-                    for s in servers or []]
+            listed = state.get(STATE_CALLER_MCP_TOOLS) or {}
+            # Only the caller's servers that answered this call's probe; none
+            # of ours, and no fallback when they are all down. Names are
+            # matched against what the server listed, so arbitrary names never
+            # add toolsets (and connections) to the cache. A refused or
+            # malformed entry yields no tools (the call is also refused before
+            # any model call by `_restore_session_config`).
+            tools = []
+            for s in servers or []:
+                if s["url"] not in listed:
+                    continue
+                chosen = set(listed[s["url"]]) & set(names) if names else set()
+                if names and not chosen:
+                    continue
+                tools.append(self._cached_mcp_toolset(s["url"], s["type"], chosen, follow_redirects=False))
+            return tools
 
         active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
         tools = list(self._builtin_tools)
@@ -394,12 +443,16 @@ class AdaptiveAgent(LlmAgent):
 
         Returning Content ends the invocation there, before any model call:
         used to refuse a `dak:model` the operator does not allow."""
-        call_tools = call_config.resolve_dak_settings(callback_context).get(call_config.STATE_CALL_TOOLS)
+        call_settings = call_config.resolve_dak_settings(callback_context)
+        call_tools = call_settings.get(call_config.STATE_CALL_TOOLS)
         if call_tools is not None and not (isinstance(call_tools, Mapping) and "mcp_servers" in call_tools):
             try:
                 await self.ensure_remote_tools_loaded()  # names for `dak:tools`
             except Exception as e:
                 logger.warning(f"Could not list the default MCP tools: {e}")
+        servers, _ = call_config.resolve_caller_mcp_servers(call_settings)
+        if servers:
+            await self._probe_caller_mcp_servers(callback_context.state, servers)
         try:
             error = self._apply_session_config(callback_context)
         except Exception as e:

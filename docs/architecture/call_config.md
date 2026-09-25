@@ -80,6 +80,20 @@
 {"error": "mcp_server_not_allowed", "requested_urls": ["http://not-allowed:9000/mcp"], "allowed_urls": ["http://mcp-server:8000/mcp"]}
 ```
 
+### 呼び出し元の MCP が落ちているとき
+
+呼び出しの始めに、各接続先のツール一覧を 1 回取る（10 秒で打ち切り）。取れなかった接続先は使わずにターンを続け、次の 2 つで理由を残す。既定のツールには切り替えない（呼び出し元が MCP を明示したため）。
+
+- セッション state の `dak:tools_error`（`/run` の応答のイベントの `stateDelta` にも出る）。接続できた呼び出しで消える
+
+```json
+[{"url": "http://caller-mcp:9000/mcp", "reason": "unreachable: timed out"}]
+```
+
+- 指示の末尾の `# Unavailable tools` 節（LLM が、使えないことを踏まえて答えられるように）
+
+`names` は、その接続先が実際に持つツール名と突き合わせる。無い名前は捨てる。
+
 ## 効く範囲と優先順位
 
 - `state_delta` で渡した値はセッション state に書かれる。そのため、**同じセッションの以降の呼び出しにも効く**。別のセッションには効かない。解除するには、同じキーに `null` を渡す

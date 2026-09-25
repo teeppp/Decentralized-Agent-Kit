@@ -122,12 +122,12 @@ def test_call_tools_mcp_servers_replaces_default_toolset(monkeypatch):
     type(default_mcp).__name__ = "McpToolset"
     agent = AdaptiveAgent(model="m", name="dak_agent", instruction="x", tools=[FunctionTool(switch_mode), default_mcp])
 
+    state = {"dak_active_skills": ["anything"], "temp:dak_caller_mcp_tools": {CALLER_MCP: ["read_file", "write_file"]}}
     with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=lambda *a, **k: ("toolset", *a)) as make:
         tools = agent._resolve_session_tools(
-            {"dak_active_skills": ["anything"]},
-            {"dak:tools": {"mcp_servers": [{"url": CALLER_MCP, "type": "http"}], "names": ["read_file"]}})
+            state, {"dak:tools": {"mcp_servers": [{"url": CALLER_MCP, "type": "http"}], "names": ["read_file", "nope"]}})
 
-    assert tools == [("toolset", CALLER_MCP, "http", ["read_file"])]  # no built-ins, no default MCP
+    assert tools == [("toolset", CALLER_MCP, "http", ["read_file"])]  # no built-ins, no default MCP, no unknown names
     make.assert_called_once()
 
 
@@ -213,3 +213,68 @@ async def test_caller_mcp_form_does_not_list_the_default_mcp_tools(monkeypatch):
             patch.object(AdaptiveAgent, "ensure_remote_tools_loaded", AsyncMock()) as ensure:
         await agent._restore_session_config(context)
     ensure.assert_not_called()
+
+
+def _probe_agent(monkeypatch, get_tools):
+    from dak_agent.adaptive_agent import AdaptiveAgent
+
+    monkeypatch.setenv("DAK_ALLOWED_MCP_URLS", CALLER_MCP)
+    agent = AdaptiveAgent(model="m", name="dak_agent", instruction="Base.", tools=[])
+    toolset = MagicMock()
+    toolset.get_tools = get_tools
+    agent._mcp_toolset_cache[(CALLER_MCP, "http", frozenset(), "no-redirects")] = toolset
+    return agent
+
+
+def _tool(name):
+    t = MagicMock()
+    t.name = name
+    return t
+
+
+@pytest.mark.asyncio
+async def test_unreachable_mcp_server_yields_structured_error_and_empty_tools(monkeypatch):
+    from google.adk.sessions.state import State
+
+    agent = _probe_agent(monkeypatch, AsyncMock(side_effect=ConnectionError("connection refused")))
+    call = {"dak:tools": {"mcp_servers": [{"url": CALLER_MCP}]}}
+    state = State(value=dict(call), delta={})
+
+    await agent._probe_caller_mcp_servers(state, [{"url": CALLER_MCP, "type": "http"}])
+
+    assert state["dak:tools_error"] == [{"url": CALLER_MCP, "reason": "unreachable: connection refused"}]
+    assert agent._resolve_session_tools(state, call) == []  # no fallback to our tools
+    assert "Unavailable tools" in agent._resolve_session_instruction(state, {})
+    assert CALLER_MCP in agent._resolve_session_instruction(state, {})
+
+
+@pytest.mark.asyncio
+async def test_reachable_mcp_server_records_its_tool_names_and_clears_an_old_error(monkeypatch):
+    from google.adk.sessions.state import State
+
+    agent = _probe_agent(monkeypatch, AsyncMock(return_value=[_tool("read_file"), _tool("grep")]))
+    state = State(value={"dak:tools_error": [{"url": CALLER_MCP, "reason": "unreachable: x"}]}, delta={})
+
+    await agent._probe_caller_mcp_servers(state, [{"url": CALLER_MCP, "type": "http"}])
+
+    assert state["temp:dak_caller_mcp_tools"] == {CALLER_MCP: ["grep", "read_file"]}
+    assert state.get("dak:tools_error") is None
+    assert "Unavailable tools" not in agent._resolve_session_instruction(state, {})
+
+
+@pytest.mark.asyncio
+async def test_a_hanging_mcp_server_times_out(monkeypatch):
+    import asyncio
+
+    from google.adk.sessions.state import State
+
+    async def hang():
+        await asyncio.sleep(60)
+
+    agent = _probe_agent(monkeypatch, hang)
+    monkeypatch.setattr("dak_agent.adaptive_agent.CALLER_MCP_PROBE_TIMEOUT_S", 0.05)
+    state = State(value={}, delta={})
+
+    await agent._probe_caller_mcp_servers(state, [{"url": CALLER_MCP, "type": "http"}])
+
+    assert state["dak:tools_error"][0]["reason"].startswith("unreachable")
