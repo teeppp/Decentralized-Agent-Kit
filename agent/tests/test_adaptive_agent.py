@@ -412,5 +412,35 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(larger), 1_000)
         self.assertLessEqual(len(larger), 1_638)
 
+    def _tools_agent(self):
+        from dak_agent.builtin_tools import switch_mode
+
+        default_mcp = MagicMock()
+        type(default_mcp).__name__ = "McpToolset"
+        return AdaptiveAgent(model="test-model", name="test_agent", instruction="x",
+                             tools=[FunctionTool(switch_mode), default_mcp])
+
+    def test_call_tools_empty_list_removes_all_tools(self):
+        agent = self._tools_agent()
+        self.assertEqual(agent._resolve_session_tools({}, {"dak:tools": []}), [])
+
+    def test_call_tools_subset_selects_named_tools_only(self):
+        agent = self._tools_agent()
+        tools = agent._resolve_session_tools({"dak_active_skills": ["anything"]}, {"dak:tools": ["switch_mode"]})
+        self.assertEqual([t.name for t in tools], ["switch_mode"])
+
+    def test_call_tools_names_not_built_in_come_from_the_default_mcp_server(self):
+        agent = self._tools_agent()
+        with patch("dak_agent.skill_tools.make_mcp_toolset", return_value=MagicMock(name="toolset")) as make:
+            tools = agent._resolve_session_tools({}, {"dak:tools": ["switch_mode", "read_file", "grep"]})
+        self.assertEqual(len(tools), 2)
+        make.assert_called_once_with(agent.mcp_url, "http", ["grep", "read_file"])
+
+    def test_without_call_tools_the_session_config_is_used_as_before(self):
+        agent = self._tools_agent()
+        names = [getattr(t, "name", None) for t in agent._resolve_session_tools({}, {})]
+        self.assertIn("switch_mode", names)
+        self.assertIn("enable_skill", names)
+
 if __name__ == '__main__':
     unittest.main()

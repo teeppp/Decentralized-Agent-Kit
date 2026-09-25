@@ -16,6 +16,9 @@ from jsonschema_specifications import REGISTRY as METASCHEMAS
 DAK_PREFIX = "dak:"
 STATE_CALL_INSTRUCTION = "dak:instruction"
 STATE_CALL_OUTPUT_SCHEMA = "dak:output_schema"  # JSON Schema (dict)
+# Tools for this call. A list of names: only those built-in tools and those
+# names from the default MCP server; [] means no tools at all.
+STATE_CALL_TOOLS = "dak:tools"
 STATE_CALL_MODEL = "dak:model"  # LiteLLM model id, e.g. "bedrock/openai.gpt-5.6-luna"
 # Operator's allow-list for `dak:model` (comma-separated model ids). Unset
 # means no caller may pick a model: callers cannot exceed the operator's

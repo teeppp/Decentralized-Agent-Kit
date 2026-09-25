@@ -209,8 +209,16 @@ class AdaptiveAgent(LlmAgent):
         max_chars = HarnessSettings(context_window=self._mode_manager.max_context_tokens).plan_chars
         return f"\n\n# Current Plan\n{builtin_tools.format_todos(todos, max_chars=max_chars)}"
 
-    def _resolve_session_tools(self, state: MutableMapping[str, Any]) -> List[Any]:
-        """Rebuild this session's tool list from its state."""
+    def _resolve_session_tools(
+        self, state: MutableMapping[str, Any], call_settings: Dict[str, Any]
+    ) -> List[Any]:
+        """Rebuild this session's tool list from its state. A per-call
+        `dak:tools` (list of names) replaces it: only those built-in tools,
+        plus those names from the default MCP server."""
+        tool_names = call_settings.get(call_config.STATE_CALL_TOOLS)
+        if isinstance(tool_names, list):
+            return self._select_tools_by_name(tool_names)
+
         active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
         tools = list(self._builtin_tools)
         current_names = {getattr(t, "name", None) for t in tools} - {None}
@@ -261,6 +269,17 @@ class AdaptiveAgent(LlmAgent):
         ):
             tools.extend(skill_tools.load_solana_wallet_tools(current_names))
 
+        return tools
+
+    def _select_tools_by_name(self, tool_names: List[Any]) -> List[Any]:
+        """`dak:tools` as a list: the named built-in tools, and the remaining
+        names filtered from the default MCP server (a name it does not have
+        simply matches nothing). An empty list means no tools at all."""
+        wanted = {str(n) for n in tool_names}
+        tools = [t for t in self._builtin_tools if getattr(t, "name", None) in wanted]
+        rest = wanted - {getattr(t, "name", None) for t in tools}
+        if rest and self._has_default_mcp_toolset:
+            tools.append(self._cached_mcp_toolset(self._mcp_url, "http", rest))
         return tools
 
     def _cached_mcp_toolset(self, url: str, conn_type: str, names) -> Any:
@@ -330,7 +349,7 @@ class AdaptiveAgent(LlmAgent):
         # it on the request as `response_schema` (LiteLlm supports it
         # alongside tools).
         live.output_schema = call_settings.get(call_config.STATE_CALL_OUTPUT_SCHEMA)
-        live.tools = self._resolve_session_tools(state)
+        live.tools = self._resolve_session_tools(state, call_settings)
         live._active_skills = list(state.get(skill_tools.STATE_ACTIVE_SKILLS, []))
         skill_tools.invalidate_canonical_tools_cache(context)
         if model_error:

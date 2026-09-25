@@ -230,7 +230,7 @@ class TestResolveSessionTools(unittest.TestCase):
         })
         agent._mcp_servers = {"extra": {"name": "extra", "url": "http://extra", "type": "sse"}}
         with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=self._fake_make_mcp_toolset()):
-            tools = agent._resolve_session_tools({"dak_active_skills": ["extra_skill", "plain"]})
+            tools = agent._resolve_session_tools({"dak_active_skills": ["extra_skill", "plain"]}, {})
         self.assertEqual(self._toolsets(tools), {
             ("http://extra", "sse"): ["t1"],
             ("http://default", "http"): ["t2"],
@@ -240,28 +240,28 @@ class TestResolveSessionTools(unittest.TestCase):
         agent = self._agent({})
         agent._has_default_mcp_toolset = True
         with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=self._fake_make_mcp_toolset()):
-            tools = agent._resolve_session_tools({"dak_mode_tool_names": []})
+            tools = agent._resolve_session_tools({"dak_mode_tool_names": []}, {})
         self.assertEqual(self._toolsets(tools), {("http://default", "http"): None})
 
     def test_no_mode_switch_means_no_mcp_toolset(self):
         agent = self._agent({})
         agent._has_default_mcp_toolset = True
         with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=self._fake_make_mcp_toolset()):
-            tools = agent._resolve_session_tools({})
+            tools = agent._resolve_session_tools({}, {})
         self.assertEqual(self._toolsets(tools), {})
 
     def test_ap2_attaches_wallet_tools_alongside_a_paid_skill(self):
         agent = self._agent({"paid": {"name": "paid", "tools": []}})
         agent._enable_ap2 = True
-        names = {getattr(t, "name", None) for t in agent._resolve_session_tools({"dak_active_skills": ["paid"]})}
+        names = {getattr(t, "name", None) for t in agent._resolve_session_tools({"dak_active_skills": ["paid"]}, {})}
         self.assertTrue(set(WALLET_TOOL_NAMES) <= names)
 
     def test_mcp_toolsets_are_reused_across_turns_and_sessions(self):
         """A fresh McpToolset per turn would leak one MCP connection per turn."""
         agent = self._agent({"plain": {"name": "plain", "tools": ["t2"]}})
         with patch("dak_agent.skill_tools.make_mcp_toolset", side_effect=self._fake_make_mcp_toolset()) as make:
-            first = agent._resolve_session_tools({"dak_active_skills": ["plain"]})
-            second = agent._resolve_session_tools({"dak_active_skills": ["plain"]})
+            first = agent._resolve_session_tools({"dak_active_skills": ["plain"]}, {})
+            second = agent._resolve_session_tools({"dak_active_skills": ["plain"]}, {})
         self.assertEqual(make.call_count, 1)
         self.assertIs(first[-1], second[-1])
 

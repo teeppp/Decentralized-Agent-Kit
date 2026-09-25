@@ -37,6 +37,7 @@
 |---|---|---|
 | `dak:instruction` | 文字列。そのセッションのシステムプロンプトになる（既定の指示・モード指示・スキルの追記を置き換える） | `AGENT_INSTRUCTION`（とモード・スキル）のまま |
 | `dak:output_schema` | JSON Schema（dict、Draft 2020-12）。LLM のリクエストに構造化出力の指定（`response_schema`、`response_mime_type=application/json`）が入り、最終応答はこのスキーマで検証される | 指定なし。今までどおりの自由形式の応答 |
+| `dak:tools` | ツール名のリスト。その呼び出しで使うツールを、組み込みのツールと既定の MCP のツールから名前で選ぶ。`[]` ならツールなし（LLM のリクエストにツールの定義が 1 つも載らない）。スキル・モードによる組み立てより優先する | スキル・モードによる今までどおりの組み立て |
 | `dak:model` | LiteLLM のモデル ID（例: `bedrock/openai.gpt-5.6-luna`、`openai/gpt-5.6-luna`）。その呼び出しの LLM リクエストだけがこのモデルに向かう。運用者が `DAK_ALLOWED_MODELS` で許可したものだけ使える | `MODEL_NAME` のまま |
 
 - `dak:instruction` の文字列はそのまま LLM に届く。ADK の `{名前}` 差し込み（セッション state の値で置き換える機能）は通さないので、`{date}` のような文字を含めてよい
