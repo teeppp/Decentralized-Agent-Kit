@@ -1,7 +1,8 @@
 """Provider-neutral `complete(prompt) -> str`, selectable at runtime.
 
 Every major provider exposes an OpenAI-compatible /chat/completions endpoint, so
-one httpx call covers all of them — no litellm/SDK bloat, no hardcoded vendor.
+one httpx call covers all of them — no litellm, no hardcoded vendor. The one
+SDK is boto3, for Bedrock with IAM (SigV4 signing), imported only on that path.
 Pick a provider purely via env:
 
   MAINT_LLM_BASE_URL   OpenAI-compatible base URL
@@ -13,6 +14,11 @@ Presets (set BASE_URL/MODEL accordingly):
   Ollama  http://localhost:11434/v1                                 llama3.2:3b        (any key)
   OpenAI  https://api.openai.com/v1                                 gpt-4o-mini        (OPENAI_API_KEY)
   Anthropic https://api.anthropic.com/v1                            claude-sonnet-5    (ANTHROPIC_API_KEY)
+
+Amazon Bedrock with IAM (no API key): MAINT_LLM_MODEL=bedrock/<model or
+inference profile id>, e.g. bedrock/global.openai.gpt-6-luna. Calls the
+Converse API with the environment's AWS credentials (in GitHub Actions: an
+OIDC-assumed role); region from AWS_REGION (default us-east-1).
 """
 
 from __future__ import annotations
@@ -22,10 +28,42 @@ import os
 import httpx
 
 
+BEDROCK_PREFIX = "bedrock/"
+
+
+# Reasoning models can think for minutes; Bedrock keeps generating (and billing)
+# after a client times out, so wait long and never resend on our own.
+BEDROCK_READ_TIMEOUT_S = 300
+
+
+def _make_bedrock_complete(model_id: str, timeout: float):
+    import boto3  # deferred: only the Bedrock path needs it
+    from botocore.config import Config
+
+    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+    client = boto3.client("bedrock-runtime", region_name=region,
+                          config=Config(read_timeout=max(timeout, BEDROCK_READ_TIMEOUT_S),
+                                        retries={"total_max_attempts": 1}))
+
+    def complete(prompt: str) -> str:
+        resp = client.converse(modelId=model_id, messages=[{"role": "user", "content": [{"text": prompt}]}])
+        # Reasoning models also return reasoningContent blocks; the answer is the text.
+        text = "".join(block.get("text", "") for block in resp["output"]["message"]["content"])
+        stop = resp.get("stopReason")
+        if stop != "end_turn" or not text.strip():
+            # Truncated, filtered or empty: an error, not "the model proposed nothing".
+            raise RuntimeError(f"Bedrock {model_id} gave no complete answer (stopReason={stop}, {len(text)} chars)")
+        return text
+
+    return complete
+
+
 def make_complete(timeout: float = 60.0):
     """Return a `complete(prompt) -> str`, or None if MAINT_LLM_* is not configured."""
     base_url = os.getenv("MAINT_LLM_BASE_URL")
     model = os.getenv("MAINT_LLM_MODEL")
+    if model and model.startswith(BEDROCK_PREFIX):
+        return _make_bedrock_complete(model[len(BEDROCK_PREFIX):], timeout)
     if not base_url or not model:
         return None
     api_key = os.getenv("MAINT_LLM_API_KEY", "not-needed")
