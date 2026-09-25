@@ -128,6 +128,14 @@ override file).
 
 ## Development
 
+After cloning, enable the git hooks (secret scanning with gitleaks before each commit and push; this repository is public):
+
+```bash
+scripts/setup/install_hooks.sh
+```
+
+Before a push or PR, `scripts/security/check.sh` checks the hooks, scans the changes, and lists what to review by eye (`docs/security/review-checklist.md`).
+
 ### Local Setup (without Docker)
 
 #### Agent Service

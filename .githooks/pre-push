@@ -1,0 +1,22 @@
+#!/bin/sh
+# Scan the commits being pushed for secrets before they become public (#291).
+# This repository is public: a push publishes. pre-commit only sees staged
+# changes, so commits made with --no-verify or in a clone without the hooks are
+# caught here. Enable: scripts/setup/install_hooks.sh
+remote=$1
+root=$(git rev-parse --show-toplevel)
+zero=0000000000000000000000000000000000000000
+fail=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in *[!0]*) ;; *) continue ;; esac  # a branch deletion: nothing to scan
+  case "$remote_sha" in
+    *[!0]*) range="$remote_sha..$local_sha" ;;
+    # A new branch: the commits no branch of this remote has yet.
+    *) range="$local_sha --not --remotes=$remote" ;;
+  esac
+  sh "$root/scripts/security/check.sh" --range "$range" --no-checklist || fail=1
+done
+if [ "$fail" != 0 ]; then
+  echo "pre-push: push stopped. Remove the secret from the commits (rewrite them), then push again." >&2
+fi
+exit "$fail"
