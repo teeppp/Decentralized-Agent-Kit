@@ -268,5 +268,62 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(content)
         self.assertEqual(json.loads(content.parts[0].text)["error"], "model_not_allowed")
 
+    def test_resolve_session_instruction_includes_current_plan_when_present(self):
+        agent = AdaptiveAgent(model="test-model", name="test_agent",
+                              instruction="Initial instruction", tools=self.mock_tools)
+        state = {"dak_todos": [{"step": "read repo", "status": "done"},
+                               {"step": "write summary", "status": "pending"}]}
+
+        instruction = agent._resolve_session_instruction(state, {})
+
+        self.assertTrue(instruction.startswith("Initial instruction"))
+        self.assertIn("# Current Plan\n1. [done] read repo\n2. [pending] write summary", instruction)
+
+    def test_resolve_session_instruction_omits_plan_section_when_absent(self):
+        agent = AdaptiveAgent(model="test-model", name="test_agent",
+                              instruction="Initial instruction", tools=self.mock_tools)
+
+        self.assertNotIn("# Current Plan", agent._resolve_session_instruction({}, {}))
+        self.assertNotIn("# Current Plan", agent._resolve_session_instruction({"dak_todos": []}, {}))
+
+    async def test_plan_text_reaches_the_model_verbatim_and_base_template_still_works(self):
+        """The plan is written by the model; `{name}` in it must not go through
+        ADK's session-state injection (an unknown name fails the turn), while
+        `{name}` in the operator's own instruction keeps working."""
+        from google.adk.apps import App
+        from google.adk.artifacts import InMemoryArtifactService
+        from google.adk.models.base_llm import BaseLlm
+        from google.adk.models.llm_response import LlmResponse
+        from google.adk.runners import Runner
+        from google.adk.sessions import InMemorySessionService
+        from google.genai import types
+
+        requests = []
+
+        class RecordingLlm(BaseLlm):
+            async def generate_content_async(self, llm_request, stream=False):
+                requests.append(llm_request)
+                yield LlmResponse(content=types.Content(role="model", parts=[types.Part(text="ok")]))
+
+        agent = AdaptiveAgent(model=RecordingLlm(model="recording"), name="dak_agent",
+                              instruction="Hello {greeting}.", tools=[])
+        sessions = InMemorySessionService()
+        session = await sessions.create_session(
+            app_name="dak_agent", user_id="u",
+            state={"greeting": "operator", "dak_todos": [{"step": "fill {summary}", "status": "pending"}]})
+        runner = Runner(app=App(name="dak_agent", root_agent=agent), session_service=sessions,
+                        artifact_service=InMemoryArtifactService())
+
+        with patch("dak_agent.remote_tools.discover_remote_tools", return_value={}):
+            async for _ in runner.run_async(
+                user_id="u", session_id=session.id,
+                new_message=types.Content(role="user", parts=[types.Part(text="hi")]),
+            ):
+                pass
+
+        system = requests[-1].config.system_instruction
+        self.assertIn("Hello operator.", system)
+        self.assertIn("1. [pending] fill {summary}", system)
+
 if __name__ == '__main__':
     unittest.main()
