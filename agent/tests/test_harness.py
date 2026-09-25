@@ -51,6 +51,11 @@ class TestHarnessSettings:
         assert s.request_token_budget == 6963
         assert s.tool_output_chars == 2000  # floor
 
+    def test_plan_chars_scales_with_the_window(self):
+        assert HarnessSettings(context_window=8192).plan_chars == 1_000       # floor
+        assert HarnessSettings(context_window=32_768).plan_chars == 1_638
+        assert HarnessSettings(context_window=1_000_000).plan_chars == 8_000  # cap
+
     def test_large_window_tool_output_is_capped(self):
         assert HarnessSettings(context_window=1_000_000).tool_output_chars == 40_000
 

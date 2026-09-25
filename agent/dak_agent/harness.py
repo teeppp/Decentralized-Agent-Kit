@@ -51,6 +51,11 @@ READ_TOOL_OUTPUT_NAME = "read_tool_output"
 _TOOL_OUTPUT_WINDOW_FRACTION = 0.15
 _MIN_TOOL_OUTPUT_CHARS = 2_000
 _MAX_TOOL_OUTPUT_CHARS = 40_000
+# Fraction of the window the session's plan may occupy in the instruction
+# (it is sent with every request).
+_PLAN_WINDOW_FRACTION = 0.05
+_MIN_PLAN_CHARS = 1_000
+_MAX_PLAN_CHARS = 8_000
 
 _ELIDED_TEMPLATE = (
     "[elided {chars} chars to fit the context window; call the tool again "
@@ -179,6 +184,13 @@ class HarnessSettings:
         # CJK output also fits.
         budget = int(self.context_window * _TOOL_OUTPUT_WINDOW_FRACTION)
         return max(_MIN_TOOL_OUTPUT_CHARS, min(_MAX_TOOL_OUTPUT_CHARS, budget))
+
+    @property
+    def plan_chars(self) -> int:
+        """Budget for the plan injected into the instruction (`# Current Plan`),
+        in chars at the same pessimistic ~1 char/token as tool output."""
+        budget = int(self.context_window * _PLAN_WINDOW_FRACTION)
+        return max(_MIN_PLAN_CHARS, min(_MAX_PLAN_CHARS, budget))
 
 
 def harness_enabled() -> bool:
