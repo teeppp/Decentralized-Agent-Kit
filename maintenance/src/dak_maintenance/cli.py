@@ -4,6 +4,7 @@ Subcommands:
   triage         依存更新を判定（auto-merge / needs-review）
   watch          憲章に沿う新技術を探索し提案 JSON を出力（tech-watch WF が Issue 化）
   feature-sync   依存の新機能取り込み提案 JSON を出力
+  collect-deps   マージ済み deps PR の本文（標準入力の JSON）から依存の一覧を出力
   charter-review 憲章の見直し提案 JSON を出力
 
 reasoning 系（watch/feature-sync/charter-review）は LLM 必須。MAINT_LLM_* 未設定なら
@@ -23,12 +24,19 @@ from .decide import decide
 from .changelog import get_changelog
 from .llm_client import make_complete
 from .watch import propose_technologies
-from .feature import propose_feature_adoptions
+from .feature import deps_from_prs, propose_feature_adoptions
 from .charter import review_charter
 
 
 def _bool(s: str) -> bool:
     return str(s).strip().lower() in {"1", "true", "yes", "success", "green"}
+
+
+def _non_negative_int(s: str) -> int:
+    n = int(s)
+    if n < 0:
+        raise argparse.ArgumentTypeError("0 以上")
+    return n
 
 
 def _read(path: str) -> str:
@@ -148,6 +156,23 @@ def cmd_feature_sync(args: argparse.Namespace) -> int:
     return _emit_proposals(proposals)
 
 
+def cmd_collect_deps(args: argparse.Namespace) -> int:
+    """stdin: `gh pr list --json body` の出力。stdout: [{"package","from","to"}]。"""
+    text = sys.stdin.read()
+    try:
+        prs = json.loads(text)
+    except ValueError as e:
+        # Empty stdin usually means the upstream `gh pr list` failed.
+        print(f"error: 標準入力が PR の JSON ではない（{'空' if not text.strip() else e}）。"
+              "gh pr list … --json body の出力を渡す", file=sys.stderr)
+        return 2
+    deps, skipped = deps_from_prs(prs)
+    if skipped:
+        print(f"note: {skipped} 件の deps-labeled PR は from/to を抽出できず対象外", file=sys.stderr)
+    json.dump(deps[: args.max_items], sys.stdout)
+    return 0
+
+
 def cmd_charter_review(args: argparse.Namespace) -> int:
     complete = _require_complete()
     if complete is None:
@@ -189,6 +214,10 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--existing-titles", default=None)
     f.add_argument("--max-items", type=int, default=2)
     f.set_defaults(func=cmd_feature_sync)
+
+    d = sub.add_parser("collect-deps", help="マージ済み deps PR の本文（stdin の JSON）から依存を集める")
+    d.add_argument("--max-items", type=_non_negative_int, default=10)
+    d.set_defaults(func=cmd_collect_deps)
 
     c = sub.add_parser("charter-review", help="憲章の見直しを提案する")
     c.add_argument("--charter", default="docs/CHARTER.md")

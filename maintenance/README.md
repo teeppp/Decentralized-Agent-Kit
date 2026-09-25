@@ -9,7 +9,7 @@ DAK が自分自身を保守するためのツールキット（要件2/3のド�
 - `llm_client` — **provider 中立**な `complete()`（Gemini/Ollama/OpenAI/… を `MAINT_LLM_*` で実行時選択）
 - `search` — Web 検索（**Tavily API**。LLM とは分離。規約遵守のためスクレイピングはしない）
 - `watch` / `feature` / `charter` — tech-watch / feature-sync / charter-review の提案パイプライン
-- `cli` — `dak-maint {triage,watch,feature-sync,charter-review}`（ワークフローから呼ぶ）
+- `cli` — `dak-maint {triage,watch,feature-sync,collect-deps,charter-review}`（ワークフローから呼ぶ。`collect-deps` は `gh pr list --json body` の出力を標準入力で受け、feature-sync に渡す依存の一覧を出す）
 
 同じロジックは `agent/skills/dependency-maintenance/` の DAK スキルからも利用でき、
 DAK 自エージェントが対話的にトリアージを実行できる。
@@ -28,6 +28,7 @@ export MAINT_LLM_BASE_URL="http://localhost:11434/v1"
 export MAINT_LLM_MODEL="llama3.1:8b"
 export MAINT_LLM_API_KEY="ollama"
 uv run dak-maint watch --charter ../docs/CHARTER.md --max-items 2   # 新技術提案 JSON
+gh pr list --state merged --search 'label:deps' --limit 30 --json body | uv run dak-maint collect-deps   # 更新された依存の一覧
 ```
 
 判定は「Tier0(semver+CI) で大半を決め、曖昧な時だけ LLM に委ねる」設計。

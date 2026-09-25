@@ -6,11 +6,40 @@ summarization. No open web search needed — the deps are already known.
 
 from __future__ import annotations
 
+import re
 from typing import Callable
 
 from .changelog import get_changelog
 from .jsonutil import extract_json
 from .proposals import Proposal, dedupe
+
+# Dependabot writes one "Updates `<pkg>` from <a> to <b>" line per package in
+# both group and single-package PR bodies; an ungrouped PR instead says
+# "Bumps [<pkg>](url) from <a> to <b>.". Non-greedy so extras such as
+# google-adk[a2a,db,mcp] do not end the match at their inner "]".
+_PER_ITEM_RE = re.compile(r"Updates `([^`]+)` from (\S+) to (\S+)")
+_SINGLE_RE = re.compile(r"Bumps? \[(.+?)\]\([^)]*\) from (\S+) to (\S+)\.")
+
+
+def deps_from_prs(prs: list[dict]) -> tuple[list[dict], int]:
+    """Merged `deps` PRs (`gh pr list --json body`) → [{"package","from","to"}],
+    first-seen update per package, and the number of PRs with no from/to
+    (e.g. range-only "requirement updates"), which is normal, not an error."""
+    deps: list[dict] = []
+    seen: set[str] = set()
+    skipped = 0
+    for pr in prs:
+        body = pr.get("body") or ""
+        matches = _PER_ITEM_RE.findall(body) or _SINGLE_RE.findall(body)
+        if not matches:
+            skipped += 1
+            continue
+        for name, frm, to in matches:
+            if name not in seen:
+                seen.add(name)
+                deps.append({"package": name, "from": frm, "to": to})
+    return deps, skipped
+
 
 CompleteFn = Callable[[str], str]
 ChangelogFn = Callable[[str, str, str], str]
