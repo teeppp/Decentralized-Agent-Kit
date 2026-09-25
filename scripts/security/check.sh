@@ -34,7 +34,13 @@ fi
 fail=0
 
 hooks=$(git -C "$root" config core.hooksPath || true)
-if [ "$hooks" = ".githooks" ] || [ "$hooks" = "$root/.githooks" ]; then
+hooks_dir=${hooks%/}
+hooks_dir=${hooks_dir#./}
+case "$hooks_dir" in
+  /*) ;;
+  ?*) hooks_dir="$root/$hooks_dir" ;;
+esac
+if [ -n "$hooks" ] && [ "${hooks_dir##*/}" = ".githooks" ] && [ -f "$hooks_dir/pre-commit" ]; then
   echo "OK  git hooks are enabled (core.hooksPath=$hooks)"
 else
   echo "NG  git hooks are not enabled (core.hooksPath=${hooks:-unset})."
@@ -42,11 +48,34 @@ else
   fail=1
 fi
 
+range_ok=1
+if [ "$mode" = range ]; then
+  # Only revisions, --not and --remotes[=<name>] (what pre-push passes for a new
+  # branch): no other git log options. And git must resolve it: gitleaks scans
+  # nothing, and says "no leaks found", for a range git cannot resolve.
+  set -f
+  for token in $range; do
+    case "$token" in
+      --not|--remotes|--remotes=*) ;;
+      -*) range_ok=0 ;;
+    esac
+  done
+  # shellcheck disable=SC2086
+  if [ "$range_ok" = 1 ] && ! git -C "$root" rev-list --quiet $range -- >/dev/null 2>&1; then
+    range_ok=0
+  fi
+  set +f
+  if [ "$range_ok" = 0 ]; then
+    echo "NG  the range \"$range\" is not a revision range git can resolve (fetch first, or check the names)."
+    fail=1
+  fi
+fi
+
 if ! command -v gitleaks >/dev/null 2>&1; then
   echo "NG  gitleaks is not installed."
   echo "    Install: brew install gitleaks (other OS: https://github.com/gitleaks/gitleaks#installing)"
   fail=1
-else
+elif [ "$range_ok" = 1 ]; then
   if [ "$mode" = staged ]; then
     what="staged changes"
     set -- git --pre-commit --staged
@@ -64,10 +93,16 @@ else
 fi
 
 if [ "$checklist" = 1 ]; then
+  items=$(awk '/^## LLM が見る項目$/ {on=1; next} on && /^#/ {exit} on && /^- / {print}' \
+    "$root/docs/security/review-checklist.md" 2>/dev/null)
   echo
-  echo "Also check by eye (docs/security/review-checklist.md):"
-  awk '/^## LLM が見る項目$/ {on=1; next} on && /^#/ {exit} on && /^- / {print}' \
-    "$root/docs/security/review-checklist.md"
+  if [ -n "$items" ]; then
+    echo "Also check by eye (docs/security/review-checklist.md):"
+    echo "$items"
+  else
+    echo "NG  no review items found under \"## LLM が見る項目\" in docs/security/review-checklist.md."
+    fail=1
+  fi
 fi
 
 exit "$fail"

@@ -45,6 +45,7 @@ def repo(tmp_path):
         (work / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / rel, work / rel)
     (work / ".githooks").mkdir()
+    _write_exec(work / ".githooks" / "pre-commit", "#!/bin/sh\nexit 0\n")  # a hook exists; it does nothing here
     (work / "a.txt").write_text("hello\n")
     run("git", "add", ".")
     run("git", "commit", "-q", "-m", "init")
@@ -74,7 +75,9 @@ def test_clean_staged_changes_pass(repo):
 def test_a_leak_in_staged_changes_fails(repo):
     (repo["dir"] / "a.txt").write_text(f"token={MARK}\n")
     repo["run"]("git", "add", "a.txt")
-    assert check(repo).returncode != 0
+    result = check(repo)
+    assert result.returncode != 0
+    assert "NG  gitleaks found secrets" in result.stdout
 
 
 def test_disabled_hooks_fail_and_say_how_to_enable_them(repo):
@@ -112,8 +115,48 @@ def test_output_lists_exactly_the_checklist_items(repo):
 def test_real_gitleaks_stops_a_langfuse_key(repo):
     (repo["bin"] / "gitleaks").unlink()
     (repo["bin"] / "gitleaks").symlink_to(shutil.which("gitleaks"))
+    (repo["dir"] / "a.txt").write_text("still clean\n")
+    repo["run"]("git", "add", "a.txt")
+    assert check(repo).returncode == 0  # the real binary with our arguments: clean passes
     # Built at run time so no key-shaped string is committed to this repository.
     key = "sk" + "-lf-" + "0f3a9c2e-7b41-4d8a-9e6f-1c2b3d4e5f60"
     (repo["dir"] / "a.txt").write_text(f"LANGFUSE_SECRET_KEY={key}\n")
     repo["run"]("git", "add", "a.txt")
+    result = check(repo)
+    assert result.returncode != 0
+    assert "NG  gitleaks found secrets" in result.stdout
+
+
+@pytest.mark.parametrize("bad", ["nosuch..HEAD", "HEAD --output=x", "-p", "HEAD --all"])
+def test_a_range_that_does_not_resolve_or_carries_options_fails(repo, bad):
+    """gitleaks scans nothing (and says "no leaks") when git cannot resolve the
+    range; the gate must not report OK then. Only revisions, --not and
+    --remotes=<name> (what pre-push passes for a new branch) are allowed."""
+    result = check(repo, "--range", bad, "--no-checklist")
+    assert result.returncode != 0
+    assert "NG  " in result.stdout
+    assert not (repo["dir"] / "x").exists()
+
+
+def test_the_new_branch_range_form_is_accepted(repo):
+    head = repo["run"]("git", "rev-parse", "HEAD").stdout.decode().strip()
+    assert check(repo, "--range", f"{head} --not --remotes=origin", "--no-checklist").returncode == 0
+
+
+def test_a_missing_or_empty_checklist_fails(repo):
+    doc = repo["dir"] / "docs" / "security" / "review-checklist.md"
+    doc.write_text("# no items here\n")
     assert check(repo).returncode != 0
+    doc.unlink()
+    assert check(repo).returncode != 0
+
+
+@pytest.mark.parametrize("value", ["./.githooks", ".githooks/"])
+def test_equivalent_hooks_path_spellings_are_accepted(repo, value):
+    repo["run"]("git", "config", "core.hooksPath", value)
+    assert check(repo, "--no-checklist").returncode == 0
+
+
+def test_hooks_path_without_the_hooks_fails(repo):
+    (repo["dir"] / ".githooks" / "pre-commit").unlink()
+    assert check(repo, "--no-checklist").returncode != 0
