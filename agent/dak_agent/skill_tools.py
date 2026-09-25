@@ -13,6 +13,8 @@ from typing import Iterable, List, Optional, Tuple
 from google.adk.tools import FunctionTool
 from google.adk.tools.mcp_tool import McpToolset, StreamableHTTPConnectionParams
 
+from . import call_config
+
 logger = logging.getLogger(__name__)
 
 # Wallet tools auto-enabled alongside paid-service skills when AP2 is active,
@@ -180,6 +182,11 @@ def make_skill_tools(agent) -> List[FunctionTool]:
         Enable a specific skill OR an individual remote tool.
         This loads the instructions and makes the tools available.
         """
+        if tool_context is not None and call_config.resolve_dak_settings(tool_context).get(
+                call_config.STATE_CALL_TOOLS) is not None:
+            return ("Error: this call's tools are fixed by the caller (dak:tools); "
+                    "enable_skill cannot add tools here.")
+
         await agent.ensure_remote_tools_loaded()
 
         if tool_context is None:

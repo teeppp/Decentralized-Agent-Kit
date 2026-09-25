@@ -412,5 +412,74 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(larger), 1_000)
         self.assertLessEqual(len(larger), 1_638)
 
+    def _tools_agent(self):
+        from dak_agent.builtin_tools import switch_mode
+
+        default_mcp = MagicMock()
+        type(default_mcp).__name__ = "McpToolset"
+        return AdaptiveAgent(model="test-model", name="test_agent", instruction="x",
+                             tools=[FunctionTool(switch_mode), default_mcp])
+
+    def test_call_tools_empty_list_removes_all_tools(self):
+        agent = self._tools_agent()
+        self.assertEqual(agent._resolve_session_tools({}, {"dak:tools": []}), [])
+
+    def test_call_tools_subset_selects_named_tools_only(self):
+        agent = self._tools_agent()
+        tools = agent._resolve_session_tools({"dak_active_skills": ["anything"]}, {"dak:tools": ["switch_mode"]})
+        self.assertEqual([t.name for t in tools], ["switch_mode"])
+
+    def test_call_tools_names_not_built_in_come_from_the_default_mcp_server(self):
+        agent = self._tools_agent()
+        agent.available_remote_tools = {"read_file": "", "grep": "", "run_command": ""}
+        with patch("dak_agent.skill_tools.make_mcp_toolset", return_value=MagicMock(name="toolset")) as make:
+            tools = agent._resolve_session_tools({}, {"dak:tools": ["switch_mode", "read_file", "grep"]})
+        self.assertEqual(len(tools), 2)
+        make.assert_called_once_with(agent.mcp_url, "http", ["grep", "read_file"])
+
+    def test_call_tools_unknown_names_never_build_mcp_toolsets(self):
+        """The toolset cache is keyed by names; names the default MCP server
+        does not have must not create (and keep) a new connection each call."""
+        agent = self._tools_agent()
+        agent.available_remote_tools = {"read_file": ""}
+        with patch("dak_agent.skill_tools.make_mcp_toolset", return_value=MagicMock(name="toolset")) as make:
+            for i in range(5):
+                agent._resolve_session_tools({}, {"dak:tools": [f"x{i}"]})
+            agent._resolve_session_tools({}, {"dak:tools": ["read_file", "nope"]})
+        make.assert_called_once_with(agent.mcp_url, "http", ["read_file"])
+        self.assertEqual(len(agent._mcp_toolset_cache), 1)
+
+    def test_call_tools_without_transfer_to_agent_drops_sub_agents_for_the_call(self):
+        from google.adk.agents import LlmAgent
+
+        agent = AdaptiveAgent(model="test-model", name="test_agent", instruction="x", tools=[],
+                              sub_agents=[LlmAgent(name="peer", model="test-model")])
+        for call_tools, expected in (([], []), (["transfer_to_agent"], ["peer"])):
+            live = agent.model_copy()
+            context = MagicMock()
+            context.state = {}
+            context._invocation_context.agent = live
+            with patch("dak_agent.call_config.resolve_dak_settings", return_value={"dak:tools": call_tools}):
+                agent._apply_session_config(context)
+            self.assertEqual([a.name for a in live.sub_agents], expected)
+        self.assertEqual([a.name for a in agent.sub_agents], ["peer"])  # the shared root is untouched
+
+    async def test_call_tools_fail_closed_when_session_config_fails(self):
+        agent = self._tools_agent()
+        live = agent.model_copy()
+        context = MagicMock()
+        context.state = {}
+        context._invocation_context.agent = live
+        with patch("dak_agent.call_config.resolve_dak_settings", return_value={"dak:tools": []}), \
+                patch.object(AdaptiveAgent, "_resolve_session_instruction", side_effect=RuntimeError("boom")):
+            await agent._restore_session_config(context)
+        self.assertEqual(live.tools, [])
+
+    def test_without_call_tools_the_session_config_is_used_as_before(self):
+        agent = self._tools_agent()
+        names = [getattr(t, "name", None) for t in agent._resolve_session_tools({}, {})]
+        self.assertIn("switch_mode", names)
+        self.assertIn("enable_skill", names)
+
 if __name__ == '__main__':
     unittest.main()
