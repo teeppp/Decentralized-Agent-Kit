@@ -177,7 +177,9 @@ def resolve_caller_mcp_servers(
             conn_type = entry.get("type", "http")
             if conn_type not in MCP_CONNECTION_TYPES:
                 break
-            servers.append({"url": entry["url"].strip(), "type": conn_type})
+            server = {"url": entry["url"].strip(), "type": conn_type}
+            if server not in servers:
+                servers.append(server)
         else:
             entries = None  # all valid
     if entries is not None:

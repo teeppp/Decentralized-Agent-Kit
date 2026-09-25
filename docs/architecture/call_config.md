@@ -73,6 +73,8 @@
 
 - **未設定なら、`mcp_servers` の指定は常に拒否する**
 - 1 つでも許可外の URL があれば、LLM を一切呼ばずに次の応答で終わる
+- 許可した接続先は、完全に信頼できるものだけにする。そのツールは確認待ちなしで動く。呼び出し元の MCP への接続では HTTP のリダイレクトをたどらない（許可した接続先から内部のアドレスへ飛ばされないため）
+- このスタック自身の `mcp-server`（`run_command` とファイルの読み書きを持つ）を許可一覧に入れない。既定では確認付きで使うツールを、どの呼び出し元も確認なしで使えるようになる。`docker-compose.test.yml` で入れているのは、統合テストの代役としてだけ
 
 ```json
 {"error": "mcp_server_not_allowed", "requested_urls": ["http://not-allowed:9000/mcp"], "allowed_urls": ["http://mcp-server:8000/mcp"]}
