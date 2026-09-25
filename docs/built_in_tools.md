@@ -35,7 +35,21 @@ These tools manage the agent's context and focus.
 
 ---
 
-## 3. Enforcer Mode Tools
+## 3. Plan and Progress Tools
+
+Always available (in every mode), and always allowed by the Ulysses Pact. The plan lives in session state (`dak_todos`), so compacting the conversation history does not lose it; it is also added to the system instruction as `# Current Plan`.
+
+### `write_todos`
+*   **Description**: Records (or replaces) the whole plan and each step's progress. Call it again whenever a status changes. A non-list `items` is rejected and the saved plan is kept.
+*   **Arguments**:
+    *   `items` (List[dict]): `[{"step": "...", "status": "pending" | "in_progress" | "done"}]`. Unknown statuses become `pending` (`completed` becomes `done`).
+
+### `read_plan`
+*   **Description**: Returns the current plan and progress, or `No plan recorded yet.`
+
+---
+
+## 4. Enforcer Mode Tools
 
 These tools are active when the agent is in **Enforcer Mode** (Strict Mode), enforcing a "Think, Plan, Act" loop.
 
@@ -57,7 +71,7 @@ These tools are active when the agent is in **Enforcer Mode** (Strict Mode), enf
 
 ---
 
-## 4. Standard MCP Tools (Server-Side)
+## 5. Standard MCP Tools (Server-Side)
 
 These tools are provided by the MCP Server (`mcp-server/`) and are what the agent typically uses to perform actual work. They are loaded dynamically or via Skills.
 

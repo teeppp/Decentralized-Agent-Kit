@@ -3,10 +3,17 @@
 These tools are always available and are never removed by mode switching
 or skill filtering.
 """
+import json
 import os
 from typing import List
 
 from google.adk.tools import FunctionTool
+
+# Session-state key holding the agent's plan: [{"step": str, "status": str}].
+# Kept in state (not in the event history), so context compaction never
+# summarises it away.
+STATE_TODOS = "dak_todos"
+TODO_STATUSES = ("pending", "in_progress", "done")
 
 
 def attempt_answer(answer: str, confidence: str, sources_used: list[str], tool_context) -> str:
@@ -48,7 +55,8 @@ def planner(task_description: str, plan_steps: list[str], allowed_tools: list[st
         task_description: Description of the task to plan for.
         plan_steps: Ordered list of steps to accomplish the task.
         allowed_tools: List of tool names you intend to use (e.g. ["read_file", "run_command"]).
-                       'planner', 'ask_question', 'attempt_answer', 'switch_mode' are always allowed.
+                       'planner', 'ask_question', 'attempt_answer', 'switch_mode', 'write_todos' and
+                       'read_plan' are always allowed.
     """
     plan_str = "\n".join([f"{i + 1}. {step}" for i, step in enumerate(plan_steps)])
 
@@ -60,6 +68,59 @@ def planner(task_description: str, plan_steps: list[str], allowed_tools: list[st
         )
 
     return f"Plan recorded for '{task_description}':\n{plan_str}{restriction_msg}"
+
+
+def _normalize_status(status) -> str:
+    s = str(status or "").strip().lower().replace(" ", "_").replace("-", "_")
+    s = {"completed": "done", "complete": "done", "inprogress": "in_progress"}.get(s, s)
+    return s if s in TODO_STATUSES else "pending"
+
+
+def _normalize_item(item) -> dict:
+    if not isinstance(item, dict):
+        return {"step": str(item), "status": "pending"}
+    return {"step": str(item.get("step", "")), "status": _normalize_status(item.get("status"))}
+
+
+def format_todos(items: list) -> str:
+    """One numbered line per plan item: `1. [done] read repo`. Tolerates plan
+    state not written by write_todos (a client may seed it)."""
+    lines = []
+    for i, item in enumerate(items):
+        item = _normalize_item(item)
+        lines.append(f"{i + 1}. [{item['status']}] {item['step']}")
+    return "\n".join(lines)
+
+
+def write_todos(items: list[dict], tool_context) -> str:
+    """
+    Record (or replace) your plan and the progress of each step. Call it again
+    whenever a step's status changes. The plan stays available after the
+    conversation history is compacted.
+    Args:
+        items: The whole plan, in order, as a list. Each item is {"step": "...", "status": "pending" | "in_progress" | "done"}.
+    """
+    if isinstance(items, str):
+        # Small models often send a nested array as a JSON string.
+        try:
+            items = json.loads(items)
+        except ValueError:
+            pass
+    if not isinstance(items, list):
+        # Never overwrite the saved plan with something that is not a plan.
+        return ('Error: items must be a list like [{"step": "...", "status": "pending"}]; '
+                "the saved plan was not changed.")
+    todos = [_normalize_item(item) for item in items]
+    tool_context.state[STATE_TODOS] = todos
+    return f"Plan saved:\n{format_todos(todos)}"
+
+
+def read_plan(tool_context) -> str:
+    """
+    Read your current plan and the progress of each step (as saved by write_todos).
+    """
+    todos = tool_context.state.get(STATE_TODOS) or []
+    return format_todos(todos) if isinstance(todos, list) and todos else "No plan recorded yet."
 
 
 def switch_mode(reason: str = "", new_focus: str = "") -> str:
@@ -98,6 +159,8 @@ def make_builtin_tools(enforcer_mode: bool = False) -> List[FunctionTool]:
     tools = [
         FunctionTool(planner, require_confirmation=planner_requires_confirmation()),
         FunctionTool(switch_mode, require_confirmation=False),
+        FunctionTool(write_todos, require_confirmation=False),
+        FunctionTool(read_plan, require_confirmation=False),
     ]
     if enforcer_mode:
         tools.append(FunctionTool(attempt_answer, require_confirmation=False))
