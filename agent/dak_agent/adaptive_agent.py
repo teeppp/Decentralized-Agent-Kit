@@ -16,6 +16,7 @@ import inspect
 from . import builtin_tools, call_config, remote_tools, skill_tools
 from .config import get_litellm_model_name, load_agent_config
 from .errors import PaymentRequiredError
+from .harness import HarnessSettings
 from .handlers.payment_handler import PaymentHandler
 from .mode_manager import ModeManager
 from .skill_registry import SkillRegistry
@@ -198,14 +199,15 @@ class AdaptiveAgent(LlmAgent):
                 )
         return instruction + self._plan_section(state)
 
-    @staticmethod
-    def _plan_section(state: MutableMapping[str, Any]) -> str:
+    def _plan_section(self, state: MutableMapping[str, Any]) -> str:
         """The session's plan (`write_todos`), rebuilt from state every turn so
-        compaction of the event history never loses it."""
+        compaction of the event history never loses it. Sent with every
+        request, so capped by the (startup) window; read_plan has it all."""
         todos = state.get(builtin_tools.STATE_TODOS)
         if not isinstance(todos, list) or not todos:
             return ""
-        return f"\n\n# Current Plan\n{builtin_tools.format_todos(todos)}"
+        max_chars = HarnessSettings(context_window=self._mode_manager.max_context_tokens).plan_chars
+        return f"\n\n# Current Plan\n{builtin_tools.format_todos(todos, max_chars=max_chars)}"
 
     def _resolve_session_tools(self, state: MutableMapping[str, Any]) -> List[Any]:
         """Rebuild this session's tool list from its state."""

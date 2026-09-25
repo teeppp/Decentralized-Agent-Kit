@@ -119,6 +119,7 @@ LiteLLM のモデルマップ、それも無ければ 128K）。
 
 - 計画の各項目と進捗（`pending` / `in_progress` / `done`）はセッション state の `dak_todos` に置く。圧縮は履歴だけを要約に置き換え、state には触れないので、計画は残る。
 - 指示は state から組み直され、最後に `# Current Plan` として計画が入る。組み直すのは呼び出しの始めと、`write_todos` の直後。そのため、長い呼び出しの途中で書いた計画も、次のモデル呼び出しから見える。
+- 指示に入れる計画は、窓の 5%（1,000〜8,000 文字、`HarnessSettings.plan_chars`）までにする（#364）。超えたら、まず done の項目を件数の 1 行にまとめ、それでも超えたら項目の区切りで切って `read_plan` を案内する（先頭の未完了の項目は、長くても途中で切って必ず見せる）。state の計画と `read_plan` はこの上限で切り詰めない。ただし `read_plan` の結果も、ほかのツールと同じくツール出力の上限を受け、長ければ `read_tool_output` でページ送りする。
 - `planner`（Ulysses Pact）は「これから使ってよいツール」を絞るもので、進捗は持たない。`write_todos` / `read_plan` は Pact で絞っていても常に呼べる。
 - 検証: `test_harness.py::test_plan_survives_compaction`（圧縮後の最後のリクエストに計画がある）、`test_ulysses_pact.py::test_planner_restriction_does_not_block_write_todos_and_read_plan`。
 

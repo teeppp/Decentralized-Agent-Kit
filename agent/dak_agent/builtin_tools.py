@@ -6,7 +6,7 @@ or skill filtering.
 import json
 import logging
 import os
-from typing import List
+from typing import List, Optional
 
 from google.adk.tools import FunctionTool
 
@@ -85,14 +85,46 @@ def _normalize_item(item) -> dict:
     return {"step": str(item.get("step", "")), "status": _normalize_status(item.get("status"))}
 
 
-def format_todos(items: list) -> str:
+def format_todos(items: list, max_chars: Optional[int] = None) -> str:
     """One numbered line per plan item: `1. [done] read repo`. Tolerates plan
-    state not written by write_todos (a client may seed it)."""
-    lines = []
-    for i, item in enumerate(items):
-        item = _normalize_item(item)
-        lines.append(f"{i + 1}. [{item['status']}] {item['step']}")
-    return "\n".join(lines)
+    state not written by write_todos (a client may seed it).
+
+    With `max_chars` (the plan injected into the instruction), a longer plan
+    first loses its done steps (replaced by a count), then is cut at an item
+    boundary with a pointer to read_plan. Numbers stay the original ones."""
+    numbered = [(i + 1, _normalize_item(item)) for i, item in enumerate(items)]
+
+    def render(rows) -> List[str]:
+        return [f"{n}. [{item['status']}] {item['step']}" for n, item in rows]
+
+    full = "\n".join(render(numbered))
+    if max_chars is None or len(full) <= max_chars:
+        return full
+
+    done = sum(1 for _, item in numbered if item["status"] == "done")
+    head = [f"({done} done steps omitted)"] if done else []
+    rest = render([(n, item) for n, item in numbered if item["status"] != "done"])
+    if len("\n".join(head + rest)) <= max_chars:
+        return "\n".join(head + rest)
+
+    def pointer(remaining: int) -> str:
+        return f"... {remaining} more step{'' if remaining == 1 else 's'}. Call read_plan for the whole plan."
+
+    shown = list(head)
+    for i, line in enumerate(rest):
+        tail = pointer(len(rest) - i - 1)
+        if len("\n".join(shown + [line, tail])) <= max_chars:
+            shown.append(line)
+            continue
+        if i == 0:
+            # Keep the current (first open) step visible even if it alone is
+            # too long: cut its text rather than dropping it.
+            room = max_chars - len("\n".join(shown + ["", tail])) - 1
+            if room > 0:
+                shown.append(line[:room] + "…")
+                i += 1
+        return "\n".join(shown + [pointer(len(rest) - i)])[:max_chars]
+    return "\n".join(shown)[:max_chars]
 
 
 def write_todos(items: list[dict], tool_context) -> str:
