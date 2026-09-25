@@ -10,7 +10,7 @@
 |---|------|----------|
 | 1 | GitHub Project / Issue を活用 | Issue/PR テンプレ・labels・CODEOWNERS・**Project を単一の真実**にする自動投入 + bootstrap/seed |
 | 2 | 脆弱性更新の自動判定・自動更新 | Dependabot → `dependency-triage` が **semver×CI×リスク** で判定し安全なものだけ auto-merge |
-| 3 | 機能更新の迅速な取り込み | `feature-sync` が release notes の**新機能**を要約し取り込み Issue 化 |
+| 3 | 機能更新の迅速な取り込み | `feature-sync` が release notes の**新機能**を要約し、取り込みの要望 Issue を起票 |
 | 4 | 新技術の目的ベース提案・目的の定期見直し | `docs/CHARTER.md`（憲章）+ `tech-watch`（隔週）+ `charter-review`（四半期） |
 | 5 | Claude 自身がより高度に扱える | `CLAUDE.md`（DAK 固有のことだけ）・権限 allowlist・保守ロジックの **DAK スキル化**（共通スキル・コマンドはリポジトリに置かない） |
 | 6 | 使うほど自動化が進む継続テスト | `nightly-eval`（小型 Ollama）+ **golden capture/replay**（決定論回帰が自動増殖） |
@@ -46,7 +46,7 @@
   workflows/
     ci.yml                  (既存: unit + fake-LLM integration。matrix に maintenance 追加)
     labels.yml              ラベル宣言同期
-    project-autoadd.yml     新 Issue/PR を Project へ
+    project-autoadd.yml     新 Issue/PR を Project へ（新しい Issue は Status=Backlog）
     dependency-triage.yml   Phase2: 依存判定 + auto-merge
     feature-sync.yml        Phase2/要件3: 新機能取り込み提案
     tech-watch.yml          Phase3: 新技術ウォッチ
@@ -68,6 +68,7 @@ tests/integration/
 scripts/setup/
   bootstrap_project.sh      Project v2 作成 + フィールド
   seed_backlog.sh           Phase2-4 を Issue 化して Project 投入
+  request_issue.py          定期実行の提案を要望 Issue として起票し Backlog に載せる
 ```
 
 ## 4. 判断エンジン（`maintenance/dak_maintenance`）
@@ -110,14 +111,14 @@ Dependabot PR
 - **実マージの安全**: `gh pr merge --auto` は branch protection の必須チェック（CI）が green に
   なるまで GitHub 側が保留する。ワークフローは可否を決めるだけ。
 - **機能取り込み（要件3）**: `feature-sync` が週次で release notes の**新機能のみ**を Tier2 で要約し、
-  `feature-sync` Issue を起票（重複検出・件数上限つき）。
+  `feature-sync` の要望 Issue を起票（重複検出・件数上限つき）。
 
 ### 5-2. 新技術ウォッチと目的の見直し（要件4）
 
 - `tech-watch`（隔週）: `dak-maint watch` が (1) LLM で憲章から検索クエリ生成 →
   (2) Web 検索（Tavily）で候補収集 → (3) LLM で憲章の採用基準に照らし評価 →
-  基準を満たすものだけ `tech-watch` Issue 化（重複検出・件数上限つき）。LLM は provider 中立。
-- `charter-review`（四半期）: landscape 変化を踏まえ憲章そのものの改訂案 Issue を起票。
+  基準を満たすものだけ `tech-watch` の要望 Issue にする（重複検出・件数上限つき）。LLM は provider 中立。
+- `charter-review`（四半期）: landscape 変化を踏まえ憲章そのものの改訂案を要望 Issue として起票。
   → **初期の目的に縛られず、目的自体を定期的に更新**する（要件4後段）。
 
 ### 5-3. 継続テストと「使うほど育つ」ループ（要件6）— 設計の要点
@@ -145,7 +146,7 @@ fake-LLM がモデル名ごとに応答をスクリプトできること（`/scr
 
 - `scripts/setup/bootstrap_project.sh` が Project v2 とカスタムフィールド（Status/Area/Type/Priority）を冪等作成。
 - `scripts/setup/seed_backlog.sh` が Phase2-4 の作業を Issue 化して Project に投入。
-- `project-autoadd.yml` が以後の新 Issue/PR を自動追加（未設定時はスキップして CI を汚さない）。
+- `project-autoadd.yml` が以後の新 Issue/PR を自動追加し、新しい Issue の Status を Backlog にする（未設定時はスキップして CI を汚さない）。定期実行の提案は `scripts/setup/request_issue.py` が要望 Issue として起票し、自分で Backlog に載せる。
 - すべての自動化アウトプット（auto-merge PR・レビュー要求・各種提案 Issue）が Project に集約される。
 
 ## 7. セットアップ（マージ後・コード外の手動作業）

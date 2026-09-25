@@ -33,22 +33,18 @@ jobs:
         run: |
           uv sync
           quarter="$(date -u +%Y)-Q$((($(date -u +%-m)-1)/3+1))"
-          existing=$(gh issue list --label charter --state open --json title --jq '[.[].title]')
+          existing=$(gh issue list --label charter --state open --json title --jq '[.[].title | sub("^要望: *"; "")]')  # 起票時に付ける「要望: 」を外して比べる
           uv run dak-maint charter-review \
             --charter ../docs/CHARTER.md \
             --quarter "$quarter" \
             --existing-titles "$existing" > proposals.json
           cat proposals.json
 
-      - name: Create issue
+      - name: Create request issues
         working-directory: maintenance
-        run: |
-          python3 - <<'PY'
-          import json, subprocess
-          for p in json.load(open("proposals.json")):
-              subprocess.run(
-                  ["gh", "issue", "create", "--title", p["title"],
-                   "--body", p["body"], "--label", ",".join(p["labels"])],
-                  check=True,
-              )
-          PY
+        env:
+          # GITHUB_TOKEN で作った Issue は project-autoadd を起動しないので、
+          # request_issue.py が Project への追加と Status=Backlog を自分で行う。
+          DAK_PROJECT_URL: ${{ vars.DAK_PROJECT_URL }}
+          DAK_PROJECT_TOKEN: ${{ secrets.DAK_PROJECT_TOKEN }}
+        run: python3 ../scripts/setup/request_issue.py proposals.json --source charter-review

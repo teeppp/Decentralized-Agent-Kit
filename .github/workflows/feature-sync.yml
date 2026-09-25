@@ -49,7 +49,7 @@ jobs:
       - name: Generate proposals
         working-directory: maintenance
         run: |
-          existing=$(gh issue list --label feature-sync --state open --json title --jq '[.[].title]')
+          existing=$(gh issue list --label feature-sync --state open --json title --jq '[.[].title | sub("^要望: *"; "")]')  # 起票時に付ける「要望: 」を外して比べる
           uv run dak-maint feature-sync \
             --deps "$(cat deps.json)" \
             --charter ../docs/CHARTER.md \
@@ -57,18 +57,11 @@ jobs:
             --max-items 2 > proposals.json
           cat proposals.json
 
-      - name: Create issues
+      - name: Create request issues
         working-directory: maintenance
-        run: |
-          python3 - <<'PY'
-          import json, subprocess
-          text = open("proposals.json").read().strip()
-          proposals = json.loads(text) if text else []
-          print(f"{len(proposals)} proposal(s)")
-          for p in proposals:
-              subprocess.run(
-                  ["gh", "issue", "create", "--title", p["title"],
-                   "--body", p["body"], "--label", ",".join(p["labels"])],
-                  check=True,
-              )
-          PY
+        env:
+          # GITHUB_TOKEN で作った Issue は project-autoadd を起動しないので、
+          # request_issue.py が Project への追加と Status=Backlog を自分で行う。
+          DAK_PROJECT_URL: ${{ vars.DAK_PROJECT_URL }}
+          DAK_PROJECT_TOKEN: ${{ secrets.DAK_PROJECT_TOKEN }}
+        run: python3 ../scripts/setup/request_issue.py proposals.json --source feature-sync

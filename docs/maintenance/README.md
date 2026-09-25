@@ -17,20 +17,23 @@
 |----------|--------|------|------|
 | `ci.yml` | PR / push(main) | unit マトリクス + fake-LLM 統合（既存） | — |
 | `labels.yml` | `labels.yml` 変更 / 手動 | ラベル体系を宣言的に同期 | — |
-| `project-autoadd.yml` | Issue/PR open | 新規 Issue/PR を Project に自動追加 | — |
+| `project-autoadd.yml` | Issue/PR open | 新規 Issue/PR を Project に自動追加し、新しい Issue の Status を Backlog にする | — |
 | `dependency-triage.yml` | `pull_request_target`(dependabot) | 依存PRを判定し auto-merge or レビュー要求 | 0→1 |
-| `feature-sync.yml` | weekly cron | 依存の新機能を要約し取り込み Issue 起票 | LLM(中立) |
-| `tech-watch.yml` | 隔週 cron | 憲章に沿う新技術を探索し提案 Issue 起票 | LLM(中立)+検索 |
-| `charter-review.yml` | 四半期 cron | 憲章の見直し Issue 起票 | LLM(中立)+検索 |
+| `feature-sync.yml` | weekly cron | 依存の新機能を要約し、取り込みの要望 Issue を起票 | LLM(中立) |
+| `tech-watch.yml` | 隔週 cron | 憲章に沿う新技術を探索し、要望 Issue を起票 | LLM(中立)+検索 |
+| `charter-review.yml` | 四半期 cron | 憲章の見直しの要望 Issue を起票 | LLM(中立)+検索 |
 | `nightly-eval.yml` | nightly cron | 小型 Ollama で実LLMスモークを実行し pass-rate 記録 | 1 |
 | `capture-golden.yml` | 手動 / nightly | 実LLMセッションを決定論テスト化して PR 提案 | 1 |
+
+定期実行の提案は `scripts/setup/request_issue.py` が「要望: 」の題・`type:request` ラベルで起票し、Project に Status=Backlog で載せる（`GITHUB_TOKEN` で作った Issue は `project-autoadd` を起動しないため、スクリプトが `gh project` の CLI で自分で行う）。採否を検討して PBI にするのは人。テストは `uv run --no-project --with pytest pytest scripts/setup -q`（CI の maintenance ジョブでも走る）。
 
 ## 初期セットアップ（一度だけ）
 
 1. **Project 作成**: `bash scripts/setup/bootstrap_project.sh`
    → 出力された URL を登録:
    - `gh variable set DAK_PROJECT_URL --body "<URL>"`
-   - `gh secret set DAK_PROJECT_TOKEN --body "<project スコープ付き PAT>"`（`project-autoadd` が user-level Project に書くため、既定 `GITHUB_TOKEN` では不可）
+   - `gh secret set DAK_PROJECT_TOKEN --body "<project スコープ付き PAT>"`（`project-autoadd` と `scripts/setup/request_issue.py` が user-level Project に書くため、既定 `GITHUB_TOKEN` では不可）
+   - Project の設定で、Status の選択肢に `Backlog` を足す（新しい Project の既定は Todo / In Progress / Done だけ。新しい Issue と定期実行の要望は Status=Backlog で載るので、無いと失敗する）
 2. **バックログ投入**: `bash scripts/setup/seed_backlog.sh`（Phase 2-4 を Issue 化）
 3. **ラベル同期**: `labels.yml` を main に push（`labels.yml` ワークフローが反映）
 4. **リポジトリ設定**:
