@@ -407,5 +407,10 @@ class TestAdaptiveAgent(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(len(plan), 1_000)
         self.assertIn("Call read_plan for the whole plan.", plan)
 
+        agent._mode_manager.max_context_tokens = 32_768  # plan_chars == 1,638
+        larger = agent._resolve_session_instruction(state, {}).split("# Current Plan\n", 1)[1]
+        self.assertGreater(len(larger), 1_000)
+        self.assertLessEqual(len(larger), 1_638)
+
 if __name__ == '__main__':
     unittest.main()

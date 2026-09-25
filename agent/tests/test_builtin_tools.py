@@ -192,6 +192,20 @@ class TestBuiltinTools(unittest.TestCase):
         self.assertEqual(len(text.splitlines()), 200)
         self.assertNotIn("read_plan", text)
 
+    def test_format_todos_keeps_the_first_open_step_even_if_it_alone_is_too_long(self):
+        items = [{"step": f"old {i}", "status": "done"} for i in range(5)] + [
+            {"step": "current " + "w" * 2000, "status": "in_progress"}, {"step": "next", "status": "pending"}]
+
+        text = format_todos(items, max_chars=1000)
+
+        self.assertLessEqual(len(text), 1000)
+        self.assertIn("6. [in_progress] current www", text)
+        self.assertTrue(text.endswith("... 1 more step. Call read_plan for the whole plan."))
+
+    def test_format_todos_never_exceeds_a_tiny_limit(self):
+        items = [{"step": "x" * 50, "status": "pending"} for _ in range(3)]
+        self.assertLessEqual(len(format_todos(items, max_chars=20)), 20)
+
 
 if __name__ == "__main__":
     unittest.main()

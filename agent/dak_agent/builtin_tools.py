@@ -107,13 +107,24 @@ def format_todos(items: list, max_chars: Optional[int] = None) -> str:
     if len("\n".join(head + rest)) <= max_chars:
         return "\n".join(head + rest)
 
+    def pointer(remaining: int) -> str:
+        return f"... {remaining} more step{'' if remaining == 1 else 's'}. Call read_plan for the whole plan."
+
     shown = list(head)
     for i, line in enumerate(rest):
-        tail = f"... {len(rest) - i} more steps. Call read_plan for the whole plan."
-        if len("\n".join(shown + [line, tail])) > max_chars:
-            return "\n".join(shown + [tail])
-        shown.append(line)
-    return "\n".join(shown)
+        tail = pointer(len(rest) - i - 1)
+        if len("\n".join(shown + [line, tail])) <= max_chars:
+            shown.append(line)
+            continue
+        if i == 0:
+            # Keep the current (first open) step visible even if it alone is
+            # too long: cut its text rather than dropping it.
+            room = max_chars - len("\n".join(shown + ["", tail])) - 1
+            if room > 0:
+                shown.append(line[:room] + "…")
+                i += 1
+        return "\n".join(shown + [pointer(len(rest) - i)])[:max_chars]
+    return "\n".join(shown)[:max_chars]
 
 
 def write_todos(items: list[dict], tool_context) -> str:

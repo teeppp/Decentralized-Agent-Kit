@@ -37,7 +37,7 @@ These tools manage the agent's context and focus.
 
 ## 3. Plan and Progress Tools
 
-Always available (in every mode), and always allowed by the Ulysses Pact. The plan lives in session state (`dak_todos`), so compacting the conversation history does not lose it; it is also added to the system instruction as `# Current Plan`, capped at 5% of the context window (1,000–8,000 chars): done steps are collapsed first, then the rest is cut at a step boundary with a pointer to `read_plan`, which always returns the whole plan.
+Always available (in every mode), and always allowed by the Ulysses Pact. The plan lives in session state (`dak_todos`), so compacting the conversation history does not lose it; it is also added to the system instruction as `# Current Plan`, capped at 5% of the context window (1,000–8,000 chars): done steps are collapsed first, then the rest is cut at a step boundary (the first open step is always shown, shortened if needed) with a pointer to `read_plan`. `read_plan` itself is never shortened by this cap; a very long result is still subject to the context harness's tool-output limit like any tool, and the model can page it with `read_tool_output`.
 
 ### `write_todos`
 *   **Description**: Records (or replaces) the whole plan and each step's progress. Call it again whenever a status changes. A non-list `items` is rejected and the saved plan is kept.
