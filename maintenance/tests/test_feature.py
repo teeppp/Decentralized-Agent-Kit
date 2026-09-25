@@ -47,3 +47,21 @@ def test_charter_review_dedupes_existing():
         quarter="2026-Q3", existing_titles=["Charter review 2026-Q3"],
     )
     assert proposals == []
+
+
+def test_a_failing_llm_call_skips_only_that_dependency(capsys):
+    """One transient LLM error (e.g. 503) must not fail the whole weekly run."""
+    from dak_maintenance.feature import propose_feature_adoptions
+
+    def complete(prompt):
+        if "pkg-a" in prompt:
+            raise RuntimeError("Server error '503 Service Unavailable'")
+        return '[{"title": "Adopt B feature", "feature": "f", "component": "agent", "sketch": "s"}]'
+
+    deps = [{"package": "pkg-a", "from": "1", "to": "2", "changelog": "New: x"},
+            {"package": "pkg-b", "from": "1", "to": "2", "changelog": "New: y"}]
+
+    proposals = propose_feature_adoptions(deps, complete)
+
+    assert [p.title for p in proposals] == ["Adopt B feature"]
+    assert "pkg-a" in capsys.readouterr().err

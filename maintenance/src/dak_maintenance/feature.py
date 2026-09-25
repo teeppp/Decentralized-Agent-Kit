@@ -7,6 +7,7 @@ summarization. No open web search needed — the deps are already known.
 from __future__ import annotations
 
 import re
+import sys
 from typing import Callable
 
 from .changelog import get_changelog
@@ -80,10 +81,14 @@ def propose_feature_adoptions(
         changelog = dep.get("changelog") or get_changelog_fn(pkg, frm, to)
         if not (changelog or "").strip():
             continue
-        raw = complete(_PROMPT.format(
-            charter=charter[:4000], package=pkg, from_version=frm,
-            to_version=to, changelog=changelog[:8000],
-        ))
+        try:
+            raw = complete(_PROMPT.format(
+                charter=charter[:4000], package=pkg, from_version=frm,
+                to_version=to, changelog=changelog[:8000],
+            ))
+        except Exception as e:  # e.g. a transient 503: skip this dep, keep the weekly run going
+            print(f"warn: {pkg} の提案を作れなかった（{e}）。次回の実行で拾う", file=sys.stderr)
+            continue
         data = extract_json(raw)
         for it in (data if isinstance(data, list) else []):
             if not isinstance(it, dict):
